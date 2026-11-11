@@ -8,13 +8,18 @@
 //
 // Usage:
 //   wmd-capture list                          JSON of permissions, devices, formats
-//   wmd-capture run --device NAME [--width W --height H --fps F --seconds S]
+//   wmd-capture run --device NAME [--width W --height H --fps F --seconds S --adopt-format]
 //                                             raw NV12 frames to stdout, logs to stderr
+//
+// Output is always W x H NV12 at the camera's rate. If the camera is in (or is
+// switched by another app to) a different format, frames are scaled with
+// VideoToolbox; --adopt-format skips configuring the camera altogether.
 //
 // Build: swiftc -O -o bin/wmd-capture capture/wmd-capture/main.swift
 
 import AVFoundation
 import Foundation
+import VideoToolbox
 
 // MARK: - Helpers
 
@@ -121,6 +126,7 @@ struct RunOptions {
     var height: Int32 = 720
     var fps: Double = 30
     var seconds: Double = 0 // 0 = until stdout closes or signal
+    var adoptFormat = false // never reconfigure the camera; scale whatever it delivers
 }
 
 func parseRun(_ args: ArraySlice<String>) -> RunOptions {
@@ -141,6 +147,7 @@ func parseRun(_ args: ArraySlice<String>) -> RunOptions {
         case "--height": o.height = number(value(), as: Int32.self)
         case "--fps": o.fps = number(value(), as: Double.self)
         case "--seconds": o.seconds = number(value(), as: Double.self)
+        case "--adopt-format": o.adoptFormat = true
         default: fail("unknown option \(a)")
         }
     }
@@ -148,13 +155,22 @@ func parseRun(_ args: ArraySlice<String>) -> RunOptions {
     return o
 }
 
+let nv12 = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+
 final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private(set) var frames = 0
     private(set) var dropped = 0
+    private(set) var scaled = 0
     private var closed = false
     private let width: Int
     private let height: Int
     let onClosed: () -> Void
+
+    // Lazily created when the camera delivers a geometry other than the one
+    // requested (another app such as OBS reconfigured the device).
+    private var transfer: VTPixelTransferSession?
+    private var pool: CVPixelBufferPool?
+    private var adaptedFrom = ""
 
     init(width: Int32, height: Int32, onClosed: @escaping () -> Void) {
         self.width = Int(width)
@@ -162,17 +178,51 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         self.onClosed = onClosed
     }
 
+    /// Scales/converts src into a fresh width x height NV12 buffer.
+    private func adapt(_ src: CVPixelBuffer) -> CVPixelBuffer? {
+        if transfer == nil {
+            var t: VTPixelTransferSession?
+            guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &t) == noErr, let t else { return nil }
+            VTSessionSetProperty(t, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Letterbox)
+            var p: CVPixelBufferPool?
+            let attrs: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: nv12,
+                kCVPixelBufferWidthKey: width,
+                kCVPixelBufferHeightKey: height,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+            ]
+            guard CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &p) == kCVReturnSuccess, let p else { return nil }
+            transfer = t
+            pool = p
+        }
+        var dst: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool!, &dst) == kCVReturnSuccess, let dst else { return nil }
+        guard VTPixelTransferSessionTransferImage(transfer!, from: src, to: dst) == noErr else { return nil }
+        return dst
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         if closed { return }
-        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        // The consumer (ffmpeg -f rawvideo) assumes a fixed frame size; never
-        // emit a frame of a different geometry, it would corrupt the stream.
+        guard var pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        // The consumer (ffmpeg -f rawvideo) assumes a fixed frame size, so a
+        // frame of another geometry or pixel format is scaled/converted
+        // rather than emitted as-is or dropped.
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
-        if w != width || h != height || CVPixelBufferGetPlaneCount(pb) != 2 {
-            log("wmd-capture: unexpected frame \(w)x\(h) planes=\(CVPixelBufferGetPlaneCount(pb)), wanted \(width)x\(height) nv12; stopping")
-            closed = true
-            onClosed()
-            return
+        let fmtType = CVPixelBufferGetPixelFormatType(pb)
+        if w != width || h != height || fmtType != nv12 {
+            let from = "\(w)x\(h) \(fourCC(fmtType))"
+            if from != adaptedFrom {
+                adaptedFrom = from
+                log("wmd-capture: camera now delivers \(from); scaling to \(width)x\(height) nv12")
+            }
+            guard let out = adapt(pb) else {
+                log("wmd-capture: cannot convert \(from) to \(width)x\(height) nv12; stopping")
+                closed = true
+                onClosed()
+                return
+            }
+            pb = out
+            scaled += 1
         }
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
@@ -209,19 +259,28 @@ func runCapture(_ o: RunOptions) {
     }
     log("wmd-capture: device \(dev.localizedName) inUseByAnotherApplication=\(dev.isInUseByAnotherApplication)")
 
-    // Pick the first format with the requested dimensions in a 4:2:0 layout
-    // and a frame-rate range that can deliver the requested fps.
+    // Choose the camera format: 4:2:0 layout, fast enough for the requested
+    // fps, then exact size if available, else the smallest size that covers
+    // the request, else the largest. Anything other than exact is scaled.
     let wanted: Set<FourCharCode> = [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                                      kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
-    guard let fmt = dev.formats.first(where: { f in
-        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-        return d.width == o.width && d.height == o.height
-            && wanted.contains(CMFormatDescriptionGetMediaSubType(f.formatDescription))
+    func dims(_ f: AVCaptureDevice.Format) -> CMVideoDimensions { CMVideoFormatDescriptionGetDimensions(f.formatDescription) }
+    let candidates = dev.formats.filter { f in
+        wanted.contains(CMFormatDescriptionGetMediaSubType(f.formatDescription))
             && f.videoSupportedFrameRateRanges.contains { $0.maxFrameRate + 0.01 >= o.fps }
-    }) else {
-        fail("no \(o.width)x\(o.height)@\(o.fps) 4:2:0 format on \(dev.localizedName); run `wmd-capture list`")
+    }
+    let exact = candidates.first { dims($0).width == o.width && dims($0).height == o.height }
+    let covering = candidates.filter { dims($0).width >= o.width && dims($0).height >= o.height }
+        .min { dims($0).width * dims($0).height < dims($1).width * dims($1).height }
+    let largest = candidates.max { dims($0).width * dims($0).height < dims($1).width * dims($1).height }
+    guard let fmt = exact ?? covering ?? largest else {
+        fail("no 4:2:0 format at >= \(o.fps) fps on \(dev.localizedName); run `wmd-capture list`")
     }
     let range = fmt.videoSupportedFrameRateRanges.first { $0.maxFrameRate + 0.01 >= o.fps }!
+    if exact == nil {
+        let d = dims(fmt)
+        log("wmd-capture: no native \(o.width)x\(o.height); capturing \(d.width)x\(d.height) and scaling")
+    }
 
     let session = AVCaptureSession()
     guard let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) else {
@@ -230,7 +289,7 @@ func runCapture(_ o: RunOptions) {
     session.addInput(input)
 
     let output = AVCaptureVideoDataOutput()
-    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: nv12]
     output.alwaysDiscardsLateVideoFrames = true
     let done = DispatchSemaphore(value: 0)
     let writer = FrameWriter(width: o.width, height: o.height, onClosed: { done.signal() })
@@ -245,22 +304,31 @@ func runCapture(_ o: RunOptions) {
     sigint.setEventHandler { stopSignal(SIGINT) }; sigint.resume()
     sigterm.setEventHandler { stopSignal(SIGTERM) }; sigterm.resume()
 
-    // Configure the device and keep the configuration lock held across
-    // startRunning(). On macOS 26 the session otherwise reconfigures the
-    // device to 1080p when it starts, whatever activeFormat or sessionPreset
-    // say (verified empirically, see ADR-0004). ffmpeg does the same thing.
-    do {
-        try dev.lockForConfiguration()
-    } catch {
-        fail("lock device for configuration: \(error)")
+    // Note: isInUseByAnotherApplication stays false for other processes of
+    // the same user, so it cannot drive this decision automatically; the
+    // caller opts in with --adopt-format when another app should own the
+    // camera's configuration (OBS, Camo, ...).
+    if o.adoptFormat {
+        log("wmd-capture: --adopt-format: keeping the camera's current format")
+        session.startRunning()
+    } else {
+        // Configure the device and keep the configuration lock held across
+        // startRunning(). On macOS 26 the session otherwise reconfigures the
+        // device to 1080p when it starts, whatever activeFormat or
+        // sessionPreset say (verified empirically, see ADR-0004).
+        do {
+            try dev.lockForConfiguration()
+        } catch {
+            fail("lock device for configuration: \(error)")
+        }
+        dev.activeFormat = fmt
+        // Use the range's own duration: the camera reports 30.00003 fps and
+        // rejects an exact 1/30 duration.
+        dev.activeVideoMinFrameDuration = range.minFrameDuration
+        dev.activeVideoMaxFrameDuration = range.minFrameDuration
+        session.startRunning()
+        dev.unlockForConfiguration()
     }
-    dev.activeFormat = fmt
-    // Use the range's own duration: the camera reports 30.00003 fps and
-    // rejects an exact 1/30 duration.
-    dev.activeVideoMinFrameDuration = range.minFrameDuration
-    dev.activeVideoMaxFrameDuration = range.minFrameDuration
-    session.startRunning()
-    dev.unlockForConfiguration()
 
     let active = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
     log("wmd-capture: running \(active.width)x\(active.height) nv12 @ \(range.maxFrameRate) fps")
@@ -273,8 +341,8 @@ func runCapture(_ o: RunOptions) {
     }
     session.stopRunning()
     let elapsed = Date().timeIntervalSince(start)
-    log(String(format: "wmd-capture: stopped after %.1fs, %d frames (%.1f fps), %d dropped",
-               elapsed, writer.frames, Double(writer.frames) / max(elapsed, 0.001), writer.dropped))
+    log(String(format: "wmd-capture: stopped after %.1fs, %d frames (%.1f fps), %d scaled, %d dropped",
+               elapsed, writer.frames, Double(writer.frames) / max(elapsed, 0.001), writer.scaled, writer.dropped))
 }
 
 // MARK: - main
@@ -286,6 +354,6 @@ case "list":
 case "run":
     runCapture(parseRun(argv.dropFirst(2)))
 default:
-    log("usage: wmd-capture list | run --device NAME [--width W] [--height H] [--fps F] [--seconds S]")
+    log("usage: wmd-capture list | run --device NAME [--width W] [--height H] [--fps F] [--seconds S] [--adopt-format]")
     exit(2)
 }

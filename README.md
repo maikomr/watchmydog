@@ -13,7 +13,7 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | # | Increment | State |
 |---|-----------|-------|
 | 0 | Scaffold: Go service with `/api/health`, web client skeleton, Makefile, docs | done |
-| 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | built, awaiting manual check |
+| 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | Mac + phone verified, OBS coexistence re-check pending |
 | 2 | Tailscale remote access | |
 | 3 | Control service supervises go2rtc, pause/resume | |
 | 4 | Web client live view | |

@@ -46,9 +46,12 @@ go2rtc stream with the two producers gives WebRTC consumers both tracks.
 - Raw 720p30 NV12 through a pipe is ~41 MB/s; negligible on this machine.
 - The helper is the process that touches the camera, so macOS camera permission (TCC) attaches to
   it. Increment 6 verifies that under launchd.
-- macOS allows several processes on one camera, but the first opener fixes the active format.
-  If OBS/Camo open the REDRAGON camera first at another size, the helper's geometry guard stops it
-  and go2rtc restarts the producer; increment 3's pause/resume and a later "adapt to the active
-  format" option in the helper are the mitigations.
+- macOS allows several processes on one camera, but they share one active format and any of them
+  can change it. The first version of the helper stopped on a geometry change, which made go2rtc
+  restart it five times a second and each restart forced 720p back, so OBS went black as well.
+  The helper now (a) never reconfigures a camera that `isInUseByAnotherApplication` and (b) scales
+  or converts frames with a `VTPixelTransferSession` when the camera delivers a different
+  geometry or pixel format. Resolution may then be dictated by OBS (typically 1080p scaled down),
+  which is acceptable. Increment 3's pause/resume remains the escape hatch.
 - Future option: encode H.264 inside the helper with VideoToolbox and feed go2rtc's exec pipe
   directly, removing ffmpeg from the video path.

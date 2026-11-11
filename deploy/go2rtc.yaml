@@ -23,7 +23,7 @@ ffmpeg:
 
 log:
   level: info
-  exec: info
+  exec: debug   # shows wmd-capture / ffmpeg stderr lines in the go2rtc log
 
 streams:
   # One stream, two producers: go2rtc takes video from the first and audio
