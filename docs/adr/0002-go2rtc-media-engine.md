@@ -24,3 +24,16 @@ useless for two-way audio); MediaMTX (good, but weaker macOS device capture stor
 - Dependency on go2rtc behaviour: pinned version in `deploy/`, and a known issue (#2084, backchannel
   advertised send-only) has a WebSocket fallback planned in increment 10.
 - WebRTC requires Opus/PCMA audio, so the mic is transcoded with `#audio=opus`.
+
+## Amendment 2026-11-11: supervision and pause/resume (increment 3)
+
+The Go service owns go2rtc: it renders `data/go2rtc.yaml` from its own config, starts go2rtc as a
+child process, restarts it with backoff if it dies, forwards its log lines, and proxies its player
+endpoints under `/media/`. go2rtc's API therefore binds to localhost only.
+
+Pause/resume of a camera is implemented by re-rendering the config without/with that camera and
+restarting go2rtc. go2rtc's runtime API can add and delete stream entries, but deleting an entry
+does not stop its capture processes while viewers are attached, so the camera would not be released
+deterministically. A restart takes a fraction of a second, kills every capture process, and the
+web client reconnects on its own. This is acceptable for a single-site edge node; a multi-camera
+cloud deployment would revisit it.

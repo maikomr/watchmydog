@@ -15,8 +15,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 0 | Scaffold: Go service with `/api/health`, web client skeleton, Makefile, docs | done |
 | 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | done |
 | 2 | Tailscale remote access | done |
-| 3 | Control service supervises go2rtc, pause/resume | in progress |
-| 4 | Web client live view | |
+| 3 | Control service supervises go2rtc, pause/resume | done |
+| 4 | Web client live view | next |
 | 5 | Auth + HTTPS | |
 | 6 | PWA + run at boot | |
 | 7 | Howl detection | |
@@ -34,9 +34,14 @@ Homebrew. `deploy/install.sh` installs ffmpeg, go2rtc (pinned release) and build
 ```sh
 make build            # compile to bin/watchmydog
 make test             # unit tests
-make run              # start the API on 127.0.0.1:8080
+make run              # start the service with deploy/watchmydog.local.yaml (created from the example)
 curl localhost:8080/api/health
+curl localhost:8080/api/cameras
 ```
+
+The service starts and supervises go2rtc itself. Player endpoints are proxied under `/media/`, for
+example `http://<host>:8080/media/stream.html?src=dog`. `POST /api/cameras/dog/pause` releases the
+camera for other apps; `POST /api/cameras/dog/resume` takes it back.
 
 Web client:
 
@@ -46,12 +51,8 @@ make web-dev          # Vite dev server on :5173, proxies /api to :8080
 make web              # production build into web/dist
 ```
 
-Camera stream proof (increment 1):
-
-```sh
-deploy/install.sh     # ffmpeg, go2rtc, wmd-capture
-make go2rtc-dev       # go2rtc on :1984 with deploy/go2rtc.yaml; open http://localhost:1984
-```
+First-time tools: `deploy/install.sh` (ffmpeg, go2rtc, wmd-capture). `make go2rtc-dev` still runs
+go2rtc standalone with `deploy/go2rtc.yaml` for troubleshooting the capture pipeline.
 
 ## Layout
 

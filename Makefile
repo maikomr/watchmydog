@@ -16,9 +16,12 @@ all: check build
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/watchmydog
 
-## run: run the Go service from source (Ctrl-C to stop)
-run:
-	go run -ldflags "$(LDFLAGS)" ./cmd/watchmydog
+CONFIG ?= deploy/watchmydog.local.yaml
+
+## run: run the Go service from source with $(CONFIG) (Ctrl-C to stop)
+run: install-capture
+	@test -f $(CONFIG) || cp deploy/watchmydog.example.yaml $(CONFIG)
+	PATH="$(HOME)/.local/bin:/opt/homebrew/bin:$$PATH" go run -ldflags "$(LDFLAGS)" ./cmd/watchmydog -config $(CONFIG)
 
 ## test: run Go unit tests with the race detector
 test:

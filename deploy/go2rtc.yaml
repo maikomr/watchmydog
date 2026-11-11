@@ -36,11 +36,3 @@ streams:
   #
   # Audio: ffmpeg's avfoundation audio capture works fine. The mic is 44.1 kHz
   # stereo; go2rtc transcodes to Opus (required by WebRTC).
-  dog:
-    - >-
-      exec:sh -c "wmd-capture run --device 'REDRAGON Live Camera' --width 1280 --height 720 --fps 30
-      | ffmpeg -hide_banner -loglevel error
-      -f rawvideo -pix_fmt nv12 -video_size 1280x720 -framerate 30 -i pipe:0
-      -c:v h264_videotoolbox -realtime 1 -b:v 2500k -g 60 -bf 0 -profile:v main
-      -rtsp_transport tcp -f rtsp {output}"#killsignal=15#killtimeout=5
-    - ffmpeg:device?audio=REDRAGON%20Live%20Camera%20Audio#audio=opus

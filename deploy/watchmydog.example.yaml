@@ -1,0 +1,37 @@
+# watchmydog configuration (increment 3).
+#
+# Copy to deploy/watchmydog.local.yaml (git-ignored) and adjust. Relative
+# paths are resolved from this file's directory.
+#
+# Precedence: defaults < this file < WATCHMYDOG_* environment < flags.
+
+# Where the HTTP API and web client listen. ":8080" = all interfaces, which
+# is what we want until increment 5 puts `tailscale serve` in front of it.
+listen: ":8080"
+
+# Generated files (go2rtc config), later recordings and the database.
+data_dir: ../data
+
+# Built web client (make web). Served at "/".
+web_dir: ../web/dist
+
+go2rtc:
+  bin: go2rtc                 # resolved via PATH, or an absolute path
+  api: 127.0.0.1:1984         # go2rtc's own API; proxied under /media/
+  rtsp: 127.0.0.1:8554        # internal tap for audio analysis/recording
+  webrtc_port: 8555           # must be reachable by viewers (LAN/tailnet)
+  ffmpeg_bin: /opt/homebrew/bin/ffmpeg
+  capture_bin: wmd-capture    # built by `make install-capture`
+  log_level: info
+
+cameras:
+  - id: dog
+    name: Living room
+    video:
+      device: REDRAGON Live Camera       # from `wmd-capture list`
+      width: 1280
+      height: 720
+      fps: 30
+      bitrate_kbps: 2500
+    audio:
+      device: REDRAGON Live Camera Audio # from `ffmpeg -f avfoundation -list_devices true -i ""`

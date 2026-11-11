@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
 	"github.com/maikomr/watchmydog/internal/httpapi"
@@ -32,10 +33,36 @@ func run() error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load(os.Args[1:], os.Getenv)
+	cfg, err := config.LoadFromOS()
 	if err != nil {
 		return err
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Media engine: supervised go2rtc process.
+	engine := go2rtc.New(go2rtc.Settings{
+		Bin:        cfg.Engine.Bin,
+		APIAddr:    cfg.Engine.APIAddr,
+		RTSPAddr:   cfg.Engine.RTSPAddr,
+		WebRTCPort: cfg.Engine.WebRTCPort,
+		FFmpegBin:  cfg.Engine.FFmpegBin,
+		CaptureBin: cfg.Engine.CaptureBin,
+		LogLevel:   cfg.Engine.LogLevel,
+	}, cfg.DataDir, logger.With("component", "engine"))
+	cameras := cfg.DomainCameras()
+	if err := engine.Start(ctx, cameras); err != nil {
+		return fmt.Errorf("start media engine: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := engine.Stop(shutdownCtx); err != nil {
+			logger.Error("stop media engine", "err", err)
+		}
+	}()
+	logger.Info("media engine ready", "cameras", len(cameras))
 
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
@@ -43,12 +70,12 @@ func run() error {
 			Version: buildinfo.Version,
 			Commit:  buildinfo.Commit,
 			Logger:  logger,
+			Cameras: cameras,
+			Engine:  engine,
+			WebDir:  cfg.WebDir,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
