@@ -42,3 +42,4 @@ spot later.
 | Inc | Date | Result | Notes |
 |-----|------|--------|-------|
 | 0 | 2026-11-11 | pass | `make check` green, `/api/health` returns ok |
+| 1 | 2026-11-11 | automated part pass | ffmpeg avfoundation cannot drive the camera on macOS 26 (ADR-0004); native helper + go2rtc produce 1280x720 H.264 + Opus (verified with `ffprobe` on `/api/stream.mp4?src=dog`). Camera sharing (automated proxy for OBS): a second AVFoundation client could open the camera while go2rtc streamed and go2rtc kept delivering; the first opener's format wins, so a second client asking for another size gets the first one's. Manual check on Mac browser, phone over Wi-Fi and real OBS: pending |

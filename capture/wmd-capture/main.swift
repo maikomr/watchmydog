@@ -1,0 +1,291 @@
+// wmd-capture: native AVFoundation webcam capture for watchmydog.
+//
+// Why this exists: on macOS 26 ffmpeg's avfoundation input fails to configure
+// the REDRAGON camera ("Configuration of video device failed") and then
+// delivers no frames, while the AVFoundation API itself works. This tool does
+// the device configuration natively and writes raw frames to stdout, where
+// ffmpeg encodes them. See docs/adr/0004-native-capture-helper.md.
+//
+// Usage:
+//   wmd-capture list                          JSON of permissions, devices, formats
+//   wmd-capture run --device NAME [--width W --height H --fps F --seconds S]
+//                                             raw NV12 frames to stdout, logs to stderr
+//
+// Build: swiftc -O -o bin/wmd-capture capture/wmd-capture/main.swift
+
+import AVFoundation
+import Foundation
+
+// MARK: - Helpers
+
+func log(_ msg: String) {
+    FileHandle.standardError.write((msg + "\n").data(using: .utf8)!)
+}
+
+func fail(_ msg: String, code: Int32 = 1) -> Never {
+    log("wmd-capture: " + msg)
+    exit(code)
+}
+
+func fourCC(_ code: FourCharCode) -> String {
+    let bytes = [UInt8((code >> 24) & 0xff), UInt8((code >> 16) & 0xff), UInt8((code >> 8) & 0xff), UInt8(code & 0xff)]
+    return String(bytes: bytes, encoding: .ascii) ?? String(code)
+}
+
+func authName(_ s: AVAuthorizationStatus) -> String {
+    switch s {
+    case .notDetermined: return "notDetermined"
+    case .restricted: return "restricted"
+    case .denied: return "denied"
+    case .authorized: return "authorized"
+    @unknown default: return "unknown"
+    }
+}
+
+/// Writes all bytes, retrying on partial writes. Returns false on EPIPE or
+/// another unrecoverable error (reader went away).
+func writeAll(fd: Int32, _ ptr: UnsafeRawPointer, _ len: Int) -> Bool {
+    var off = 0
+    while off < len {
+        let n = write(fd, ptr + off, len - off)
+        if n < 0 {
+            if errno == EINTR { continue }
+            return false
+        }
+        off += n
+    }
+    return true
+}
+
+func videoDevices() -> [AVCaptureDevice] {
+    AVCaptureDevice.DiscoverySession(
+        deviceTypes: [.external, .builtInWideAngleCamera, .continuityCamera],
+        mediaType: .video, position: .unspecified
+    ).devices
+}
+
+// MARK: - list
+
+struct FormatInfo: Encodable {
+    let width: Int32
+    let height: Int32
+    let pixelFormat: String
+    let maxFps: [Double]
+}
+
+struct DeviceInfo: Encodable {
+    let name: String
+    let uniqueID: String
+    let inUseByAnotherApplication: Bool
+    let formats: [FormatInfo]
+}
+
+struct ListOutput: Encodable {
+    let cameraAuthorization: String
+    let microphoneAuthorization: String
+    let devices: [DeviceInfo]
+}
+
+func runList() {
+    let devices = videoDevices().map { d -> DeviceInfo in
+        var seen = Set<String>()
+        var formats: [FormatInfo] = []
+        for f in d.formats {
+            let dims = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            let cc = fourCC(CMFormatDescriptionGetMediaSubType(f.formatDescription))
+            let fps = f.videoSupportedFrameRateRanges.map { ($0.maxFrameRate * 1000).rounded() / 1000 }
+            let key = "\(dims.width)x\(dims.height)\(cc)\(fps)"
+            if seen.insert(key).inserted {
+                formats.append(FormatInfo(width: dims.width, height: dims.height, pixelFormat: cc, maxFps: fps))
+            }
+        }
+        return DeviceInfo(name: d.localizedName, uniqueID: d.uniqueID,
+                          inUseByAnotherApplication: d.isInUseByAnotherApplication, formats: formats)
+    }
+    let out = ListOutput(
+        cameraAuthorization: authName(AVCaptureDevice.authorizationStatus(for: .video)),
+        microphoneAuthorization: authName(AVCaptureDevice.authorizationStatus(for: .audio)),
+        devices: devices)
+    let enc = JSONEncoder()
+    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try! enc.encode(out)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+}
+
+// MARK: - run
+
+struct RunOptions {
+    var device = ""
+    var width: Int32 = 1280
+    var height: Int32 = 720
+    var fps: Double = 30
+    var seconds: Double = 0 // 0 = until stdout closes or signal
+}
+
+func parseRun(_ args: ArraySlice<String>) -> RunOptions {
+    var o = RunOptions()
+    var it = args.makeIterator()
+    while let a = it.next() {
+        func value() -> String {
+            guard let v = it.next() else { fail("missing value for \(a)") }
+            return v
+        }
+        func number<T: LosslessStringConvertible>(_ v: String, as: T.Type) -> T {
+            guard let n = T(v) else { fail("bad value for \(a): \(v)") }
+            return n
+        }
+        switch a {
+        case "--device": o.device = value()
+        case "--width": o.width = number(value(), as: Int32.self)
+        case "--height": o.height = number(value(), as: Int32.self)
+        case "--fps": o.fps = number(value(), as: Double.self)
+        case "--seconds": o.seconds = number(value(), as: Double.self)
+        default: fail("unknown option \(a)")
+        }
+    }
+    if o.device.isEmpty { fail("--device is required (see `wmd-capture list`)") }
+    return o
+}
+
+final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private(set) var frames = 0
+    private(set) var dropped = 0
+    private var closed = false
+    private let width: Int
+    private let height: Int
+    let onClosed: () -> Void
+
+    init(width: Int32, height: Int32, onClosed: @escaping () -> Void) {
+        self.width = Int(width)
+        self.height = Int(height)
+        self.onClosed = onClosed
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if closed { return }
+        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        // The consumer (ffmpeg -f rawvideo) assumes a fixed frame size; never
+        // emit a frame of a different geometry, it would corrupt the stream.
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+        if w != width || h != height || CVPixelBufferGetPlaneCount(pb) != 2 {
+            log("wmd-capture: unexpected frame \(w)x\(h) planes=\(CVPixelBufferGetPlaneCount(pb)), wanted \(width)x\(height) nv12; stopping")
+            closed = true
+            onClosed()
+            return
+        }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+
+        // NV12 is bi-planar: plane 0 = Y (w*h), plane 1 = interleaved CbCr (w*h/2).
+        // Rows may be padded (bytesPerRow > width), so copy row by row.
+        let planes = CVPixelBufferGetPlaneCount(pb)
+        for p in 0..<planes {
+            guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, p) else { return }
+            let rows = CVPixelBufferGetHeightOfPlane(pb, p)
+            let rowBytes = CVPixelBufferGetWidthOfPlane(pb, p) * (p == 0 ? 1 : 2)
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(pb, p)
+            for r in 0..<rows {
+                if !writeAll(fd: 1, base + r * stride, rowBytes) {
+                    closed = true
+                    onClosed()
+                    return
+                }
+            }
+        }
+        frames += 1
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        dropped += 1
+    }
+}
+
+func runCapture(_ o: RunOptions) {
+    signal(SIGPIPE, SIG_IGN) // detect reader exit via write() error instead of dying
+
+    guard let dev = videoDevices().first(where: { $0.localizedName == o.device || $0.uniqueID == o.device }) else {
+        fail("device not found: \(o.device)")
+    }
+    log("wmd-capture: device \(dev.localizedName) inUseByAnotherApplication=\(dev.isInUseByAnotherApplication)")
+
+    // Pick the first format with the requested dimensions in a 4:2:0 layout
+    // and a frame-rate range that can deliver the requested fps.
+    let wanted: Set<FourCharCode> = [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+    guard let fmt = dev.formats.first(where: { f in
+        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+        return d.width == o.width && d.height == o.height
+            && wanted.contains(CMFormatDescriptionGetMediaSubType(f.formatDescription))
+            && f.videoSupportedFrameRateRanges.contains { $0.maxFrameRate + 0.01 >= o.fps }
+    }) else {
+        fail("no \(o.width)x\(o.height)@\(o.fps) 4:2:0 format on \(dev.localizedName); run `wmd-capture list`")
+    }
+    let range = fmt.videoSupportedFrameRateRanges.first { $0.maxFrameRate + 0.01 >= o.fps }!
+
+    let session = AVCaptureSession()
+    guard let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) else {
+        fail("cannot add input for \(dev.localizedName)")
+    }
+    session.addInput(input)
+
+    let output = AVCaptureVideoDataOutput()
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+    output.alwaysDiscardsLateVideoFrames = true
+    let done = DispatchSemaphore(value: 0)
+    let writer = FrameWriter(width: o.width, height: o.height, onClosed: { done.signal() })
+    output.setSampleBufferDelegate(writer, queue: DispatchQueue(label: "wmd-capture.frames"))
+    guard session.canAddOutput(output) else { fail("cannot add video output") }
+    session.addOutput(output)
+
+    let stopSignal: (Int32) -> Void = { _ in done.signal() }
+    let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
+    sigint.setEventHandler { stopSignal(SIGINT) }; sigint.resume()
+    sigterm.setEventHandler { stopSignal(SIGTERM) }; sigterm.resume()
+
+    // Configure the device and keep the configuration lock held across
+    // startRunning(). On macOS 26 the session otherwise reconfigures the
+    // device to 1080p when it starts, whatever activeFormat or sessionPreset
+    // say (verified empirically, see ADR-0004). ffmpeg does the same thing.
+    do {
+        try dev.lockForConfiguration()
+    } catch {
+        fail("lock device for configuration: \(error)")
+    }
+    dev.activeFormat = fmt
+    // Use the range's own duration: the camera reports 30.00003 fps and
+    // rejects an exact 1/30 duration.
+    dev.activeVideoMinFrameDuration = range.minFrameDuration
+    dev.activeVideoMaxFrameDuration = range.minFrameDuration
+    session.startRunning()
+    dev.unlockForConfiguration()
+
+    let active = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
+    log("wmd-capture: running \(active.width)x\(active.height) nv12 @ \(range.maxFrameRate) fps")
+
+    let start = Date()
+    if o.seconds > 0 {
+        _ = done.wait(timeout: .now() + o.seconds)
+    } else {
+        done.wait()
+    }
+    session.stopRunning()
+    let elapsed = Date().timeIntervalSince(start)
+    log(String(format: "wmd-capture: stopped after %.1fs, %d frames (%.1f fps), %d dropped",
+               elapsed, writer.frames, Double(writer.frames) / max(elapsed, 0.001), writer.dropped))
+}
+
+// MARK: - main
+
+let argv = CommandLine.arguments
+switch argv.dropFirst().first {
+case "list":
+    runList()
+case "run":
+    runCapture(parseRun(argv.dropFirst(2)))
+default:
+    log("usage: wmd-capture list | run --device NAME [--width W] [--height H] [--fps F] [--seconds S]")
+    exit(2)
+}

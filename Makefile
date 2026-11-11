@@ -8,7 +8,7 @@ COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS  := -X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
             -X $(MODULE)/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: all build run test lint fmt web web-install web-dev clean check
+.PHONY: all build run test lint fmt web web-install web-dev clean check capture install-capture go2rtc-dev
 
 all: check build
 
@@ -34,6 +34,21 @@ fmt:
 
 ## check: everything CI runs
 check: fmt lint test
+
+## capture: build the native macOS capture helper into bin/wmd-capture
+capture: bin/wmd-capture
+
+bin/wmd-capture: capture/wmd-capture/main.swift
+	mkdir -p bin
+	swiftc -O -o $@ $<
+
+## install-capture: install the capture helper into ~/.local/bin (used by go2rtc)
+install-capture: bin/wmd-capture
+	install -m 755 bin/wmd-capture $(HOME)/.local/bin/wmd-capture
+
+## go2rtc-dev: run go2rtc standalone with deploy/go2rtc.yaml (increment 1 proof)
+go2rtc-dev: install-capture
+	PATH="$(HOME)/.local/bin:/opt/homebrew/bin:$$PATH" go2rtc -config deploy/go2rtc.yaml
 
 ## web-install: install web client dependencies (uses the lockfile)
 web-install:

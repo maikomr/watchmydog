@@ -93,7 +93,12 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - `git init`, Go module, Vite TS app, Makefile (`make build test run web`), README, `.gitignore`, ADR-001 (architecture), ADR-002 (go2rtc), ADR-003 (Tailscale).
 - **Verify:** `make build && make test` succeeds; `make run` prints "listening on :8080" and `curl localhost:8080/api/health` returns `{"status":"ok"}`.
 
-### 1. Camera + audio proof on the Mac (no code of ours yet)
+### 1. Camera + audio proof on the Mac
+
+> Outcome note (2026-11-11): ffmpeg's avfoundation input cannot configure this camera on macOS 26,
+> so this increment grew a small native Swift helper, `capture/wmd-capture`, that feeds raw frames
+> to ffmpeg for encoding. go2rtc is not in Homebrew; `deploy/install.sh` pins a GitHub release.
+> See ADR-0004.
 - `brew install ffmpeg go2rtc`. List devices: `ffmpeg -f avfoundation -list_devices true -i ""`.
 - Write `deploy/go2rtc.yaml` with stream `dog: ffmpeg:device?video=<REDRAGON idx>&audio=<REDRAGON idx>&resolution=1280x720&framerate=30#video=h264#audio=opus` (framerate is mandatory on macOS).
 - **Verify:** open `http://localhost:1984` on the Mac → WebRTC tab shows live video and you hear the mic. Then on the phone over home Wi‑Fi, `http://192.168.1.4:1984`, same result. Also open OBS with the REDRAGON camera at the same time and confirm both keep working (camera sharing check). Note the macOS camera/microphone permission prompts that appear and for which process.

@@ -13,7 +13,7 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | # | Increment | State |
 |---|-----------|-------|
 | 0 | Scaffold: Go service with `/api/health`, web client skeleton, Makefile, docs | done |
-| 1 | Camera + audio proof with go2rtc | next |
+| 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | built, awaiting manual check |
 | 2 | Tailscale remote access | |
 | 3 | Control service supervises go2rtc, pause/resume | |
 | 4 | Web client live view | |
@@ -28,7 +28,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 
 ## Quick start
 
-Requirements: Go 1.25+, Node 24+.
+Requirements: Go 1.25+, Node 24+, Xcode Command Line Tools (for the Swift capture helper),
+Homebrew. `deploy/install.sh` installs ffmpeg, go2rtc (pinned release) and builds the helper.
 
 ```sh
 make build            # compile to bin/watchmydog
@@ -45,11 +46,19 @@ make web-dev          # Vite dev server on :5173, proxies /api to :8080
 make web              # production build into web/dist
 ```
 
+Camera stream proof (increment 1):
+
+```sh
+deploy/install.sh     # ffmpeg, go2rtc, wmd-capture
+make go2rtc-dev       # go2rtc on :1984 with deploy/go2rtc.yaml; open http://localhost:1984
+```
+
 ## Layout
 
 ```
 cmd/watchmydog/   process entrypoint, wiring only
 internal/         Go packages (domain, ports, adapters, httpapi, config)
+capture/          wmd-capture, native macOS webcam capture helper (Swift)
 web/              TypeScript web client (Vite)
 deploy/           go2rtc config, launchd plist, install script
 docs/             plan, ADRs, developer guide

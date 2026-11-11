@@ -1,0 +1,46 @@
+# go2rtc configuration for watchmydog (increment 1: standalone proof).
+#
+# Run on the Mac mini:   make go2rtc-dev        (builds/installs wmd-capture first)
+# Web UI:                http://localhost:1984  (stream "dog", WebRTC tab)
+#
+# From increment 3 on, the watchmydog Go service generates this file from its
+# own config and supervises go2rtc; until then it is hand-maintained here.
+
+api:
+  # 0.0.0.0 on purpose for increment 1 so the phone can reach the UI over
+  # home Wi-Fi. Increment 3 moves this to 127.0.0.1 behind the Go service.
+  listen: ":1984"
+
+rtsp:
+  # Local tap used later for audio analysis and recording.
+  listen: "127.0.0.1:8554"
+
+webrtc:
+  listen: ":8555"
+
+ffmpeg:
+  bin: /opt/homebrew/bin/ffmpeg
+
+log:
+  level: info
+  exec: info
+
+streams:
+  # One stream, two producers: go2rtc takes video from the first and audio
+  # from the second.
+  #
+  # Video: ffmpeg's own avfoundation input cannot configure this camera on
+  # macOS 26 (ADR-0004), so the native helper wmd-capture grabs raw NV12
+  # frames and pipes them into ffmpeg, which hardware-encodes H.264 with
+  # VideoToolbox and pushes RTSP into go2rtc ({output}).
+  #
+  # Audio: ffmpeg's avfoundation audio capture works fine. The mic is 44.1 kHz
+  # stereo; go2rtc transcodes to Opus (required by WebRTC).
+  dog:
+    - >-
+      exec:sh -c "wmd-capture run --device 'REDRAGON Live Camera' --width 1280 --height 720 --fps 30
+      | ffmpeg -hide_banner -loglevel error
+      -f rawvideo -pix_fmt nv12 -video_size 1280x720 -framerate 30 -i pipe:0
+      -c:v h264_videotoolbox -realtime 1 -b:v 2500k -g 60 -bf 0 -profile:v main
+      -rtsp_transport tcp -f rtsp {output}"#killsignal=15#killtimeout=5
+    - ffmpeg:device?audio=REDRAGON%20Live%20Camera%20Audio#audio=opus
