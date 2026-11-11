@@ -41,6 +41,19 @@ status() {
     /^\truns = /            { print "runs:  " $3 }'
 }
 
+# Wait (up to 20 s) until the service answers its health check, so whatever
+# runs next (make doctor, a test) sees it fully started.
+wait_healthy() {
+  for _ in $(seq 1 40); do
+    if curl -s -m 1 http://127.0.0.1:8080/api/health 2>/dev/null | grep -q '"status":"ok"'; then
+      log "Service is up and healthy"
+      return 0
+    fi
+    sleep 0.5
+  done
+  printf '\033[1;33m%s\033[0m\n' "    Service not healthy after 20 s; see: make logs"
+}
+
 unload() {
   if loaded; then
     log "Stopping ${LABEL}"
@@ -94,7 +107,7 @@ install_agent() {
   log "Loading ${PLIST}"
   launchctl bootstrap "${DOMAIN}" "${PLIST}"
   launchctl enable "${DOMAIN}/${LABEL}"
-  sleep 2
+  wait_healthy
   status
   echo "logs:  ${LOG_DIR}/watchmydog.log"
 }
@@ -102,7 +115,7 @@ install_agent() {
 case "${1:-}" in
   install)   install_agent ;;
   uninstall) unload; rm -f "${PLIST}"; log "Removed ${PLIST} (kept ${BIN} and ${APP})" ;;
-  restart)   loaded || die "agent not loaded"; launchctl kickstart -k "${DOMAIN}/${LABEL}"; sleep 2; status ;;
+  restart)   loaded || die "agent not loaded"; launchctl kickstart -k "${DOMAIN}/${LABEL}"; wait_healthy; status ;;
   status)    status ;;
   *)         sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

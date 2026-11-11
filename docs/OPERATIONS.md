@@ -61,6 +61,7 @@ as". That is a security trade-off for the owner to make; the service works eithe
 | "Camera released for other apps" | Someone tapped Release: tap "Resume camera" |
 | Login always says wrong secret | `cat data/secret` on the Mac; rotate: delete it, `make secret`, `make restart-agent` (logs out all devices) |
 | Too many attempts | Wait the shown minutes, or `make restart-agent` to clear the lockout |
+| Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size
 

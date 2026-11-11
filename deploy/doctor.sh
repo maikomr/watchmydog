@@ -5,6 +5,10 @@
 #   deploy/doctor.sh        (or: make doctor)
 #
 # Exit status 1 when a required check fails; warnings do not fail.
+#
+# Command output is captured into variables before matching: with pipefail,
+# `cmd | grep -q x` reports failure when grep exits early and cmd then dies
+# of SIGPIPE, even though x was found.
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +28,8 @@ else
   warn "System sleep after ${sleep_min} min" \
        "The service keeps the Mac awake while it runs, but turn on System Settings > Energy > \"Prevent automatic sleeping when the display is off\" as a second line of defence."
 fi
-if pmset -g assertions | grep -q "watchmydog: serving the camera stream"; then
+assertions="$(pmset -g assertions 2>/dev/null)"
+if [[ "${assertions}" == *"watchmydog: serving the camera stream"* ]]; then
   ok "Service holds its keep-awake lock"
 else
   fail "No keep-awake lock from the service" "Is the service running with keep_awake: true? See: make agent-status"
@@ -56,7 +61,8 @@ else
   state="$(printf '%s' "${ts_json}" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("BackendState",""))' 2>/dev/null)"
   dns="$(printf '%s' "${ts_json}" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null)"
   if [[ "${state}" == "Running" ]]; then ok "Connected as ${dns}"; else fail "Tailscale is ${state:-not running}" "Open the Tailscale app and log in."; fi
-  if tailscale serve status 2>/dev/null | grep -q "proxy http://127.0.0.1:8080"; then
+  serve="$(tailscale serve status 2>/dev/null)"
+  if [[ "${serve}" == *"proxy http://127.0.0.1:8080"* ]]; then
     ok "tailscale serve publishes https://${dns}"
   else
     fail "tailscale serve is not configured" "Run: make serve"
