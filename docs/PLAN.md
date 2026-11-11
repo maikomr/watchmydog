@@ -113,7 +113,7 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** `make run` starts go2rtc automatically; `curl /api/cameras` lists `dog`; `/media/stream.html?src=dog` plays; `pause` frees the camera (ffmpeg process gone), `resume` brings it back.
 
 ### 4. Web client v1 (live view)
-- Mobile-first page: WebRTC player using WHEP against `/media/api/webrtc?src=dog`, tap-to-unmute (autoplay policy), connection state, reconnect with backoff, fullscreen, quality toggle (720p/360p = two go2rtc streams).
+- Mobile-first page: WebRTC player using WHEP against `/media/api/webrtc?src=dog`, tap-to-unmute (autoplay policy), connection state, reconnect with backoff (must recover after a pause/resume restart of go2rtc and after the phone sleeps; go2rtc's bundled page does not), fullscreen, quality toggle (720p/360p = two go2rtc streams).
 - **Verify:** on the phone via Tailscale, wave at the camera and see it on screen in under 1 s; audio audible; lock/unlock phone → stream resumes.
 
 ### 5. Auth + HTTPS
