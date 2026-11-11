@@ -7,9 +7,10 @@
 # own config and supervises go2rtc; until then it is hand-maintained here.
 
 api:
-  # 0.0.0.0 on purpose for increment 1 so the phone can reach the UI over
-  # home Wi-Fi. Increment 3 moves this to 127.0.0.1 behind the Go service.
-  listen: ":1984"
+  # Localhost only: go2rtc's API has no authentication. This standalone
+  # config is for troubleshooting the capture pipeline on the Mac itself;
+  # normal use goes through the watchmydog service (login + HTTPS).
+  listen: "127.0.0.1:1984"
 
 rtsp:
   # Local tap used later for audio analysis and recording.

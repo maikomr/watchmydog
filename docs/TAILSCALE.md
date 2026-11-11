@@ -50,3 +50,19 @@ where `<mac-hostname>` is the MagicDNS name shown by `tailscale status` on the M
 - go2rtc binding to `:1984` on all interfaces is temporary (increment 1 proof). From increment 3 on,
   go2rtc listens on localhost only and the Go service is the only thing reachable over the tailnet.
 - `tailscale serve` (increment 5) will put a valid HTTPS certificate in front of the Go service.
+
+## HTTPS with `tailscale serve` (increment 5)
+
+The watchmydog service listens on `127.0.0.1:8080` only. `tailscale serve` publishes it on the
+tailnet with a valid Let's Encrypt certificate:
+
+```sh
+make serve        # tailscale serve --bg http://127.0.0.1:8080
+```
+
+The app is then at `https://<mac-hostname>.<tailnet>.ts.net` (here
+`https://maikos-mac-mini.tail54b4a7.ts.net`). The setting persists across reboots; `make serve-off`
+removes it. This is `serve` (tailnet only), not `funnel` (public internet).
+
+HTTPS is required for the login cookie (`Secure`), and later for the installable app, push
+notifications and the microphone (two-way audio).

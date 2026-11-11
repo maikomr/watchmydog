@@ -25,6 +25,10 @@ func newProxy(apiAddr string) http.Handler {
 		if r.Header.Get("Origin") != "" {
 			r.Header.Set("Origin", target.String())
 		}
+		// Our session cookie and any credentials stay with us; go2rtc does
+		// not need them and should never see or log them.
+		r.Header.Del("Cookie")
+		r.Header.Del("Authorization")
 	}
 	return p
 }

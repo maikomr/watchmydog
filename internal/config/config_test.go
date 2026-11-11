@@ -5,19 +5,37 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
-func noEnv(string) string { return "" }
+const testSecret = "test-secret-123456"
+
+// env returns a getenv func backed by a map.
+func env(kv map[string]string) func(string) string {
+	return func(k string) string { return kv[k] }
+}
+
+// envSecret is the minimal environment for a valid config.
+var envSecret = env(map[string]string{"WATCHMYDOG_SECRET": testSecret})
 
 func noFile(string) ([]byte, error) { return nil, errors.New("no file") }
 
-func fileWith(content string) func(string) ([]byte, error) {
-	return func(string) ([]byte, error) { return []byte(content), nil }
+// files returns a readFile func backed by a map of path -> content.
+func files(m map[string]string) func(string) ([]byte, error) {
+	return func(p string) ([]byte, error) {
+		if c, ok := m[p]; ok {
+			return []byte(c), nil
+		}
+		return nil, os.ErrNotExist
+	}
 }
 
 const sampleYAML = `
 listen: ":8080"
 data_dir: data
+auth:
+  secret_file: secret
+  session_ttl: 48h
 go2rtc:
   bin: /usr/local/bin/go2rtc
   log_level: debug
@@ -37,8 +55,15 @@ cameras:
       device: REDRAGON Live Camera Audio
 `
 
+func sampleFiles() func(string) ([]byte, error) {
+	return files(map[string]string{
+		"/etc/wmd/watchmydog.yaml": sampleYAML,
+		"/etc/wmd/secret":          testSecret + "\n",
+	})
+}
+
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(nil, noEnv, noFile)
+	cfg, err := Load(nil, envSecret, noFile)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -48,13 +73,16 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Engine.Bin != "go2rtc" || cfg.Engine.WebRTCPort != 8555 {
 		t.Errorf("engine defaults = %+v", cfg.Engine)
 	}
+	if cfg.Auth.SessionTTL != 30*24*time.Hour || cfg.Auth.Secret != testSecret {
+		t.Errorf("auth = %+v", cfg.Auth)
+	}
 	if len(cfg.Cameras) != 0 {
 		t.Errorf("expected no cameras by default")
 	}
 }
 
 func TestLoadYAMLFileAndRelativePaths(t *testing.T) {
-	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, noEnv, fileWith(sampleYAML))
+	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, env(nil), sampleFiles())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -66,6 +94,12 @@ func TestLoadYAMLFileAndRelativePaths(t *testing.T) {
 	}
 	if cfg.WebDir != "/etc/wmd/web/dist" {
 		t.Errorf("WebDir = %q, want default resolved relative to config file", cfg.WebDir)
+	}
+	if cfg.Auth.SecretFile != "/etc/wmd/secret" || cfg.Auth.Secret != testSecret {
+		t.Errorf("auth secret not read from file next to config: %+v", cfg.Auth)
+	}
+	if cfg.Auth.SessionTTL != 48*time.Hour {
+		t.Errorf("SessionTTL = %v", cfg.Auth.SessionTTL)
 	}
 	if cfg.Engine.Bin != "/usr/local/bin/go2rtc" || cfg.Engine.LogLevel != "debug" {
 		t.Errorf("engine = %+v", cfg.Engine)
@@ -82,38 +116,69 @@ func TestLoadYAMLFileAndRelativePaths(t *testing.T) {
 	}
 }
 
-func TestConfigPathFromEnv(t *testing.T) {
-	env := func(k string) string {
-		if k == "WATCHMYDOG_CONFIG" {
-			return "/x/cfg.yaml"
-		}
-		return ""
+func TestSecretEnvOverridesFile(t *testing.T) {
+	e := env(map[string]string{"WATCHMYDOG_SECRET": "  from-the-environment  "})
+	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, e, sampleFiles())
+	if err != nil {
+		t.Fatal(err)
 	}
-	var asked string
-	read := func(p string) ([]byte, error) { asked = p; return []byte(sampleYAML), nil }
-	if _, err := Load(nil, env, read); err != nil {
+	if cfg.Auth.Secret != "from-the-environment" {
+		t.Errorf("Secret = %q, want env value trimmed", cfg.Auth.Secret)
+	}
+}
+
+func TestMissingSecretIsAnError(t *testing.T) {
+	_, err := Load(nil, env(nil), noFile)
+	if err == nil || !strings.Contains(err.Error(), "no secret configured") {
+		t.Errorf("expected missing-secret error, got %v", err)
+	}
+	// Secret file configured but absent: the error says how to create it.
+	only := files(map[string]string{"/etc/wmd/watchmydog.yaml": sampleYAML})
+	_, err = Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, env(nil), only)
+	if err == nil || !strings.Contains(err.Error(), "gen-secret /etc/wmd/secret") {
+		t.Errorf("expected gen-secret hint, got %v", err)
+	}
+}
+
+func TestShortSecretIsAnError(t *testing.T) {
+	_, err := Load(nil, env(map[string]string{"WATCHMYDOG_SECRET": "short"}), noFile)
+	if err == nil || !strings.Contains(err.Error(), "at least") {
+		t.Errorf("expected short-secret error, got %v", err)
+	}
+}
+
+func TestAuthDisabledNeedsNoSecret(t *testing.T) {
+	yml := "auth:\n  disabled: true\n  secret_file: missing\n"
+	cfg, err := Load([]string{"-config", "c.yaml"}, env(nil), files(map[string]string{"c.yaml": yml}))
+	if err != nil {
+		t.Fatalf("disabled auth should not need a secret: %v", err)
+	}
+	if !cfg.Auth.Disabled || cfg.Auth.Secret != "" {
+		t.Errorf("auth = %+v", cfg.Auth)
+	}
+}
+
+func TestConfigPathFromEnv(t *testing.T) {
+	e := env(map[string]string{"WATCHMYDOG_CONFIG": "/etc/wmd/watchmydog.yaml"})
+	cfg, err := Load(nil, e, sampleFiles())
+	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if asked != "/x/cfg.yaml" {
-		t.Errorf("read %q, want path from env", asked)
+	if cfg.ListenAddr != ":8080" {
+		t.Errorf("config from env path not loaded: %q", cfg.ListenAddr)
 	}
 }
 
 func TestPrecedenceFlagOverEnvOverFile(t *testing.T) {
-	env := func(k string) string {
-		if k == "WATCHMYDOG_LISTEN" {
-			return "0.0.0.0:9000"
-		}
-		return ""
-	}
-	cfg, err := Load([]string{"-config", "c.yaml"}, env, fileWith(sampleYAML))
+	e := env(map[string]string{"WATCHMYDOG_LISTEN": "0.0.0.0:9000"})
+	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, e, sampleFiles())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.ListenAddr != "0.0.0.0:9000" {
 		t.Errorf("env should beat file, got %q", cfg.ListenAddr)
 	}
-	cfg, err = Load([]string{"-config", "c.yaml", "-listen", ":1234"}, env, fileWith(sampleYAML))
+	cfg, err = Load([]string{"-config", "/etc/wmd/watchmydog.yaml", "-listen", ":1234"}, e, sampleFiles())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -123,7 +188,7 @@ func TestPrecedenceFlagOverEnvOverFile(t *testing.T) {
 }
 
 func TestUnknownYAMLFieldIsAnError(t *testing.T) {
-	_, err := Load([]string{"-config", "c.yaml"}, noEnv, fileWith("listen: ':1'\nbogus: 1\n"))
+	_, err := Load([]string{"-config", "c.yaml"}, envSecret, files(map[string]string{"c.yaml": "listen: ':1'\nbogus: 1\n"}))
 	if err == nil || !strings.Contains(err.Error(), "bogus") {
 		t.Errorf("expected unknown-field error, got %v", err)
 	}
@@ -137,7 +202,7 @@ cameras:
   - id: dog
     video: { device: "", width: 0, height: 0, fps: 0, bitrate_kbps: 0 }
 `
-	_, err := Load([]string{"-config", "c.yaml"}, noEnv, fileWith(bad))
+	_, err := Load([]string{"-config", "c.yaml"}, envSecret, files(map[string]string{"c.yaml": bad}))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -149,23 +214,36 @@ cameras:
 }
 
 func TestMissingConfigFileIsAnError(t *testing.T) {
-	if _, err := Load([]string{"-config", "missing.yaml"}, noEnv, noFile); err == nil {
+	if _, err := Load([]string{"-config", "missing.yaml"}, envSecret, noFile); err == nil {
 		t.Error("expected error")
 	}
 }
 
 func TestLoadRejectsUnknownFlag(t *testing.T) {
-	if _, err := Load([]string{"-bogus"}, noEnv, noFile); err == nil {
+	if _, err := Load([]string{"-bogus"}, envSecret, noFile); err == nil {
 		t.Error("expected error for unknown flag")
 	}
 }
 
 func TestDeployExampleConfigParses(t *testing.T) {
-	data, err := os.ReadFile("../../deploy/watchmydog.example.yaml")
+	const path = "../../deploy/watchmydog.example.yaml"
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Skip("example config not present:", err)
 	}
-	if _, err := Load([]string{"-config", "../../deploy/watchmydog.example.yaml"}, noEnv, func(string) ([]byte, error) { return data, nil }); err != nil {
-		t.Errorf("deploy/watchmydog.example.yaml must load: %v", err)
+	// The example's secret file does not exist in the repo; any other path
+	// read returns a stand-in secret.
+	read := func(p string) ([]byte, error) {
+		if p == path {
+			return data, nil
+		}
+		return []byte(testSecret), nil
+	}
+	cfg, err := Load([]string{"-config", path}, env(nil), read)
+	if err != nil {
+		t.Fatalf("deploy/watchmydog.example.yaml must load: %v", err)
+	}
+	if cfg.Auth.Disabled {
+		t.Error("the example config must not disable auth")
 	}
 }

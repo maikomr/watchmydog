@@ -13,13 +13,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/maikomr/watchmydog/internal/adapters/auth/sharedsecret"
 	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
 	"github.com/maikomr/watchmydog/internal/httpapi"
+	"github.com/maikomr/watchmydog/internal/ports"
 )
 
 func main() {
@@ -30,12 +33,29 @@ func main() {
 }
 
 func run() error {
+	// Subcommands that do not start the service.
+	if len(os.Args) > 1 && os.Args[1] == "gen-secret" {
+		return genSecret(os.Args[2:])
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
 
 	cfg, err := config.LoadFromOS()
 	if err != nil {
 		return err
+	}
+
+	var auth ports.Authenticator
+	if cfg.Auth.Disabled {
+		logger.Warn("authentication DISABLED (auth.disabled: true): anyone who can reach the service can watch")
+	} else {
+		a, err := sharedsecret.New(cfg.Auth.Secret, cfg.Auth.SessionTTL, nil)
+		if err != nil {
+			return fmt.Errorf("auth: %w", err)
+		}
+		auth = a
+		warnIfReadableByOthers(logger, cfg.Auth.SecretFile)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -73,6 +93,7 @@ func run() error {
 			Cameras: cameras,
 			Engine:  engine,
 			WebDir:  cfg.WebDir,
+			Auth:    auth,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -94,5 +115,37 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// genSecret implements `watchmydog gen-secret <file>`: it creates a random
+// login secret with mode 0600. It never prints the secret itself, so it does
+// not end up in terminal scrollback or logs; read it with `cat <file>`.
+func genSecret(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: watchmydog gen-secret <file>")
+	}
+	path := args[0]
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if err := sharedsecret.CreateSecretFile(path); err != nil {
+		return err
+	}
+	fmt.Printf("Login secret written to %s (mode 0600).\nShow it with: cat %s\n", path, path)
+	return nil
+}
+
+// warnIfReadableByOthers flags a secret file other local users could read.
+func warnIfReadableByOthers(logger *slog.Logger, path string) {
+	if path == "" {
+		return
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		logger.Warn("secret file is readable by other users; run chmod 600", "file", path, "mode", fi.Mode().Perm().String())
 	}
 }

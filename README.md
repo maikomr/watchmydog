@@ -17,7 +17,7 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 2 | Tailscale remote access | done |
 | 3 | Control service supervises go2rtc, pause/resume | done |
 | 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
-| 5 | Auth + HTTPS | in progress |
+| 5 | Auth + HTTPS (shared secret, tailscale serve) | built, awaiting manual check |
 | 6 | PWA + run at boot | |
 | 7 | Howl detection | |
 | 8 | Push notifications | |
@@ -34,15 +34,19 @@ Homebrew. `deploy/install.sh` installs ffmpeg, go2rtc (pinned release) and build
 ```sh
 make build            # compile to bin/watchmydog
 make test             # unit tests
+make secret           # once: create the login secret in data/secret (cat it to see it)
 make run              # start the service with deploy/watchmydog.local.yaml (created from the example)
+make serve            # once: publish it on the tailnet over HTTPS
 curl localhost:8080/api/health
-curl localhost:8080/api/cameras
 ```
 
-The service starts and supervises go2rtc itself and serves the web client at `/`
-(`http://maikos-mac-mini:8080` from the phone). Player endpoints are proxied under `/media/`.
-`POST /api/cameras/dog/pause` releases the camera for other apps; `POST /api/cameras/dog/resume`
-takes it back; the web client has buttons for both.
+Open `https://<mac-hostname>.<tailnet>.ts.net` on the phone and log in with the secret. The
+service listens on localhost only; `tailscale serve` provides HTTPS (docs/TAILSCALE.md). Every API
+and media route needs a session cookie (ADR-0005).
+
+The service starts and supervises go2rtc itself and serves the web client at `/`. Player endpoints
+are proxied under `/media/`. `POST /api/cameras/dog/pause` releases the camera for other apps;
+`POST /api/cameras/dog/resume` takes it back; the web client has buttons for both.
 
 Web client (`web/`): a WHEP WebRTC player with tap-to-unmute, reconnect with backoff, a stall
 watchdog (reconnects when frames stop, e.g. after a go2rtc restart), fullscreen and a high/low

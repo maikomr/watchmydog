@@ -110,3 +110,29 @@ video {
   font-size: 0.85rem;
   min-height: 1.2em;
 }
+
+.muted { color: var(--muted); }
+
+.login {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+  margin: 15vh auto 0;
+  padding: 0 16px;
+}
+.login h1 { font-size: 1.4rem; }
+.login p { margin: 0; }
+.login input {
+  font: inherit;
+  font-size: 16px; /* avoids zoom-on-focus on mobile */
+  padding: 12px 14px;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  color: var(--fg);
+}
+.login-error { color: var(--err); min-height: 1.2em; }
+.boot-error { padding: 16px; color: var(--warn); }

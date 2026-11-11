@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/maikomr/watchmydog/internal/domain"
@@ -30,6 +31,15 @@ type Deps struct {
 	Engine  ports.StreamEngine
 	// WebDir is the built web client directory; empty disables static serving.
 	WebDir string
+
+	// Auth verifies logins and sessions. Nil disables authentication.
+	Auth ports.Authenticator
+	// LoginMaxFailures and LoginWindow tune login rate limiting
+	// (defaults: 5 failures per 15 minutes per client).
+	LoginMaxFailures int
+	LoginWindow      time.Duration
+
+	limiter *loginLimiter
 }
 
 // NewHandler builds the root http.Handler with all routes registered.
@@ -40,18 +50,33 @@ func NewHandler(d Deps) http.Handler {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.LoginMaxFailures <= 0 {
+		d.LoginMaxFailures = defaultLoginMaxFailures
+	}
+	if d.LoginWindow <= 0 {
+		d.LoginWindow = defaultLoginWindow
+	}
+	// Set before registering routes: method values below capture a copy of d.
+	d.limiter = newLoginLimiter(d.LoginMaxFailures, d.LoginWindow, d.Now)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", d.handleHealth)
-	mux.HandleFunc("GET /api/cameras", d.handleListCameras)
-	mux.HandleFunc("GET /api/cameras/{id}", d.handleGetCamera)
-	mux.HandleFunc("POST /api/cameras/{id}/pause", d.handlePause)
-	mux.HandleFunc("POST /api/cameras/{id}/resume", d.handleResume)
 
+	// Public: health, session check, login/logout, the static web client.
+	mux.HandleFunc("GET /api/health", d.handleHealth)
+	mux.HandleFunc("GET /api/session", d.handleSession)
+	mux.HandleFunc("POST /api/login", d.handleLogin)
+	mux.HandleFunc("POST /api/logout", d.handleLogout)
+
+	// Everything else needs a session.
+	mux.Handle("GET /api/cameras", d.protect(http.HandlerFunc(d.handleListCameras)))
+	mux.Handle("GET /api/cameras/{id}", d.protect(http.HandlerFunc(d.handleGetCamera)))
+	mux.Handle("POST /api/cameras/{id}/pause", d.protect(http.HandlerFunc(d.handlePause)))
+	mux.Handle("POST /api/cameras/{id}/resume", d.protect(http.HandlerFunc(d.handleResume)))
 	if d.Engine != nil {
 		// Player endpoints of the engine, e.g. /media/api/webrtc?src=dog.
-		mux.Handle("/media/", http.StripPrefix("/media", d.Engine.MediaHandler()))
+		mux.Handle("/media/", d.protect(http.StripPrefix("/media", d.Engine.MediaHandler())))
 	}
+
 	if d.WebDir != "" {
 		mux.Handle("/", spaHandler(d.WebDir))
 	}
@@ -183,6 +208,11 @@ func (d Deps) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	by := "anonymous"
+	if p, ok := principalFrom(r.Context()); ok {
+		by = p.Subject
+	}
+	d.Logger.Info("camera state changed", "camera", c.ID, "paused", paused, "by", by)
 	writeJSON(w, http.StatusOK, d.view(r, c))
 }
 
@@ -191,6 +221,11 @@ func (d Deps) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
 func spaHandler(dir string) http.Handler {
 	fs := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Unknown API/media paths are errors, not client-side routes.
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/media/") {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
 		p := filepath.Join(dir, filepath.Clean("/"+r.URL.Path))
 		if _, err := os.Stat(p); err != nil && filepath.Ext(r.URL.Path) == "" {
 			r.URL.Path = "/"

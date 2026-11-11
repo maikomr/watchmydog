@@ -1,19 +1,27 @@
-# watchmydog configuration (increment 3).
+# watchmydog configuration.
 #
 # Copy to deploy/watchmydog.local.yaml (git-ignored) and adjust. Relative
 # paths are resolved from this file's directory.
 #
 # Precedence: defaults < this file < WATCHMYDOG_* environment < flags.
 
-# Where the HTTP API and web client listen. ":8080" = all interfaces, which
-# is what we want until increment 5 puts `tailscale serve` in front of it.
-listen: ":8080"
+# Where the HTTP API and web client listen. Localhost only: phones reach it
+# through `tailscale serve` (HTTPS on the tailnet), never directly.
+listen: 127.0.0.1:8080
 
 # Generated files (go2rtc config), later recordings and the database.
 data_dir: ../data
 
 # Built web client (make web). Served at "/".
 web_dir: ../web/dist
+
+auth:
+  # One-line shared secret, mode 0600, git-ignored. Create with `make secret`.
+  # WATCHMYDOG_SECRET in the environment overrides the file.
+  secret_file: ../data/secret
+  # How long a device stays logged in.
+  session_ttl: 720h
+  # disabled: true   # local development only; anyone who can reach the port can watch
 
 go2rtc:
   bin: go2rtc                 # resolved via PATH, or an absolute path

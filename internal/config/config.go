@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -26,10 +28,28 @@ type Config struct {
 	DataDir string `yaml:"data_dir"`
 	// WebDir is the built web client to serve at "/". Empty disables it.
 	WebDir string `yaml:"web_dir"`
+	// Auth configures login.
+	Auth Auth `yaml:"auth"`
 	// Engine configures the go2rtc media engine.
 	Engine Engine `yaml:"go2rtc"`
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
+}
+
+// MinSecretLength is the shortest accepted login secret.
+const MinSecretLength = 12
+
+// Auth is the login section.
+type Auth struct {
+	// Disabled turns authentication off entirely. Local development only.
+	Disabled bool `yaml:"disabled"`
+	// SecretFile holds the shared login secret on one line. Create it with
+	// `watchmydog gen-secret <file>`. WATCHMYDOG_SECRET overrides it.
+	SecretFile string `yaml:"secret_file"`
+	// SessionTTL is how long a login stays valid on a device.
+	SessionTTL time.Duration `yaml:"session_ttl"`
+	// Secret is the resolved secret. Never read from or written to YAML.
+	Secret string `yaml:"-"`
 }
 
 // Engine is the go2rtc section.
@@ -76,6 +96,7 @@ func Defaults() Config {
 		ListenAddr: "127.0.0.1:8080",
 		DataDir:    "data",
 		WebDir:     "web/dist",
+		Auth:       Auth{SessionTTL: 30 * 24 * time.Hour},
 		Engine: Engine{
 			Bin:        "go2rtc",
 			APIAddr:    "127.0.0.1:1984",
@@ -120,6 +141,7 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 		base := filepath.Dir(*configPath)
 		cfg.DataDir = resolveRel(base, cfg.DataDir)
 		cfg.WebDir = resolveRel(base, cfg.WebDir)
+		cfg.Auth.SecretFile = resolveRel(base, cfg.Auth.SecretFile)
 	}
 
 	if v := getenv("WATCHMYDOG_LISTEN"); v != "" {
@@ -127,6 +149,18 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 	}
 	if *listen != "" {
 		cfg.ListenAddr = *listen
+	}
+
+	if !cfg.Auth.Disabled {
+		if v := getenv("WATCHMYDOG_SECRET"); v != "" {
+			cfg.Auth.Secret = strings.TrimSpace(v)
+		} else if cfg.Auth.SecretFile != "" {
+			data, err := readFile(cfg.Auth.SecretFile)
+			if err != nil {
+				return Config{}, fmt.Errorf("read auth secret: %w (create it with: watchmydog gen-secret %s)", err, cfg.Auth.SecretFile)
+			}
+			cfg.Auth.Secret = strings.TrimSpace(string(data))
+		}
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -145,6 +179,18 @@ func (c Config) Validate() error {
 	var errs []error
 	if c.ListenAddr == "" {
 		errs = append(errs, errors.New("listen address must not be empty"))
+	}
+	if !c.Auth.Disabled {
+		switch {
+		case c.Auth.Secret == "":
+			errs = append(errs, errors.New("auth: no secret configured; set auth.secret_file or WATCHMYDOG_SECRET "+
+				"(generate one with `watchmydog gen-secret data/secret`), or auth.disabled: true for local development"))
+		case len(c.Auth.Secret) < MinSecretLength:
+			errs = append(errs, fmt.Errorf("auth: secret must be at least %d characters", MinSecretLength))
+		}
+	}
+	if c.Auth.SessionTTL <= 0 {
+		errs = append(errs, errors.New("auth.session_ttl must be positive"))
 	}
 	if c.Engine.Bin == "" || c.Engine.FFmpegBin == "" || c.Engine.CaptureBin == "" {
 		errs = append(errs, errors.New("go2rtc.bin, go2rtc.ffmpeg_bin and go2rtc.capture_bin are required"))

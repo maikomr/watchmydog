@@ -8,7 +8,7 @@ COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS  := -X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
             -X $(MODULE)/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture install-capture go2rtc-dev
+.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture install-capture go2rtc-dev secret serve serve-off
 
 all: check build
 
@@ -52,6 +52,19 @@ install-capture: bin/wmd-capture
 ## go2rtc-dev: run go2rtc standalone with deploy/go2rtc.yaml (increment 1 proof)
 go2rtc-dev: install-capture
 	PATH="$(HOME)/.local/bin:/opt/homebrew/bin:$$PATH" go2rtc -config deploy/go2rtc.yaml
+
+## secret: create the login secret in data/secret (once; delete the file to rotate)
+secret:
+	go run ./cmd/watchmydog gen-secret data/secret
+
+## serve: publish the service on the tailnet over HTTPS (persists across reboots)
+serve:
+	tailscale serve --bg http://127.0.0.1:8080
+	tailscale serve status
+
+## serve-off: stop publishing the service on the tailnet
+serve-off:
+	tailscale serve --https=443 off
 
 ## web-install: install web client dependencies (uses the lockfile)
 web-install:
