@@ -49,9 +49,13 @@ go2rtc stream with the two producers gives WebRTC consumers both tracks.
 - macOS allows several processes on one camera, but they share one active format and any of them
   can change it. The first version of the helper stopped on a geometry change, which made go2rtc
   restart it five times a second and each restart forced 720p back, so OBS went black as well.
-  The helper now (a) never reconfigures a camera that `isInUseByAnotherApplication` and (b) scales
-  or converts frames with a `VTPixelTransferSession` when the camera delivers a different
-  geometry or pixel format. Resolution may then be dictated by OBS (typically 1080p scaled down),
-  which is acceptable. Increment 3's pause/resume remains the escape hatch.
+  The helper now (a) scales or converts frames with a `VTPixelTransferSession` when the camera
+  delivers a different geometry or pixel format, and (b) when `lockForConfiguration` is refused
+  (AVError -11817 "Cannot Use <camera>", which is what happens while OBS holds the lock) it adopts
+  the current format instead of exiting. `isInUseByAnotherApplication` is useless for this: it stays
+  false for other processes of the same user. Resolution may then be dictated by OBS (typically
+  1080p scaled down), which is acceptable. Verified with a simulator that holds the lock at 1080p:
+  the helper streams 720p at 30 fps and the simulator keeps its 30 fps. Increment 3's pause/resume
+  remains the escape hatch.
 - Future option: encode H.264 inside the helper with VideoToolbox and feed go2rtc's exec pipe
   directly, removing ffmpeg from the video path.

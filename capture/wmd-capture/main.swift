@@ -308,19 +308,28 @@ func runCapture(_ o: RunOptions) {
     // the same user, so it cannot drive this decision automatically; the
     // caller opts in with --adopt-format when another app should own the
     // camera's configuration (OBS, Camo, ...).
-    if o.adoptFormat {
+    var adopt = o.adoptFormat
+    if adopt {
         log("wmd-capture: --adopt-format: keeping the camera's current format")
-        session.startRunning()
     } else {
         // Configure the device and keep the configuration lock held across
         // startRunning(). On macOS 26 the session otherwise reconfigures the
         // device to 1080p when it starts, whatever activeFormat or
         // sessionPreset say (verified empirically, see ADR-0004).
+        //
+        // The lock is refused (AVError -11817 "Cannot Use <camera>") while
+        // another process such as OBS holds it. That is the reliable "someone
+        // else owns the camera" signal, so fall back to adopting its format.
         do {
             try dev.lockForConfiguration()
         } catch {
-            fail("lock device for configuration: \(error)")
+            log("wmd-capture: camera configuration owned by another app (\(error.localizedDescription)); adopting its format")
+            adopt = true
         }
+    }
+    if adopt {
+        session.startRunning()
+    } else {
         dev.activeFormat = fmt
         // Use the range's own duration: the camera reports 30.00003 fps and
         // rejects an exact 1/30 duration.
