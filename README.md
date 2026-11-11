@@ -17,8 +17,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 2 | Tailscale remote access | done |
 | 3 | Control service supervises go2rtc, pause/resume | done |
 | 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
-| 5 | Auth + HTTPS (shared secret, tailscale serve) | built, awaiting manual check |
-| 6 | PWA + run at boot | |
+| 5 | Auth + HTTPS (shared secret, tailscale serve) | done |
+| 6 | PWA + run at boot + keep the Mac awake | next |
 | 7 | Howl detection | |
 | 8 | Push notifications | |
 | 9 | Recording and clips | |
