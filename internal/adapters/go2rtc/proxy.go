@@ -18,6 +18,13 @@ func newProxy(apiAddr string) http.Handler {
 	p.Director = func(r *http.Request) {
 		director(r)
 		r.Host = target.Host
+		// go2rtc's WebSocket handler rejects requests whose Origin host does
+		// not match the Host header (403). Browsers send the public origin
+		// (e.g. http://maikos-mac-mini:8080), so present it as local. Origin
+		// policy for our own API is enforced in the HTTP layer, not here.
+		if r.Header.Get("Origin") != "" {
+			r.Header.Set("Origin", target.String())
+		}
 	}
 	return p
 }

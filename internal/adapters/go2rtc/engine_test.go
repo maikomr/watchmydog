@@ -32,7 +32,7 @@ func newFakeGo2rtc(t *testing.T) *fakeGo2rtc {
 		_ = json.NewEncoder(w).Encode(f.streams)
 	})
 	mux.HandleFunc("/api/webrtc", func(w http.ResponseWriter, r *http.Request) {
-		f.hits = append(f.hits, r.Method+" "+r.URL.RequestURI()+" host="+r.Host)
+		f.hits = append(f.hits, r.Method+" "+r.URL.RequestURI()+" host="+r.Host+" origin="+r.Header.Get("Origin"))
 		w.Write([]byte("sdp-answer"))
 	})
 	f.srv = httptest.NewServer(mux)
@@ -177,12 +177,14 @@ func TestMediaProxyRewritesHost(t *testing.T) {
 	h := http.StripPrefix("/media", e.MediaHandler())
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "http://watchmydog.example/media/api/webrtc?src=dog", strings.NewReader("sdp-offer"))
+	req.Header.Set("Origin", "http://watchmydog.example")
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || rr.Body.String() != "sdp-answer" {
 		t.Fatalf("proxy response = %d %q", rr.Code, rr.Body.String())
 	}
 	last := fake.hits[len(fake.hits)-1]
-	if !strings.HasPrefix(last, "POST /api/webrtc?src=dog host="+fake.addr()) {
-		t.Errorf("upstream saw %q", last)
+	want := "POST /api/webrtc?src=dog host=" + fake.addr() + " origin=http://" + fake.addr()
+	if last != want {
+		t.Errorf("upstream saw %q, want %q", last, want)
 	}
 }
