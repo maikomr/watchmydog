@@ -262,8 +262,44 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }
 }
 
+/// Watchdog state, touched only on the control queue.
+final class Watch {
+    var writer: FrameWriter?
+    var lastCount = 0
+    var lastProgress = Date()
+}
+
 func runCapture(_ o: RunOptions) {
     signal(SIGPIPE, SIG_IGN) // detect reader exit via write() error instead of dying
+
+    // Watchdog, started before any AVFoundation call because those can block
+    // (for example while a permission prompt is waiting for a click). It
+    // stops when the parent pipeline is gone (we were orphaned and no frame
+    // came to hit EPIPE), and exits with an error when no frame was written
+    // for a while (permission pending, camera unplugged or stalled, or the
+    // reader stopped reading), so go2rtc restarts us instead of everyone
+    // waiting forever. It exits directly: a graceful stop could hang behind
+    // a blocked AVFoundation call or a write() on a full pipe.
+    let control = DispatchQueue(label: "wmd-capture.control")
+    let watch = Watch()
+    let parentAtStart = getppid()
+    let watchdog = DispatchSource.makeTimerSource(queue: control)
+    watchdog.schedule(deadline: .now() + 1, repeating: 1)
+    watchdog.setEventHandler {
+        if getppid() != parentAtStart {
+            log("wmd-capture: parent process exited; stopping")
+            exit(0)
+        }
+        let n = watch.writer?.frameCount ?? 0
+        if n != watch.lastCount {
+            watch.lastCount = n
+            watch.lastProgress = Date()
+        } else if o.stallTimeout > 0 && Date().timeIntervalSince(watch.lastProgress) > o.stallTimeout {
+            log(String(format: "wmd-capture: no frames for %.0fs (camera permission pending, or camera stalled); exiting so it is restarted", o.stallTimeout))
+            exit(3)
+        }
+    }
+    watchdog.resume()
 
     guard let dev = videoDevices().first(where: { $0.localizedName == o.device || $0.uniqueID == o.device }) else {
         fail("device not found: \(o.device)")
@@ -319,10 +355,9 @@ func runCapture(_ o: RunOptions) {
     guard session.canAddOutput(output) else { fail("cannot add video output") }
     session.addOutput(output)
 
-    // Signals and the watchdog run on their own queue: the main thread is
-    // blocked in done.wait() below, so handlers on .main would never run
-    // (an earlier version ignored SIGTERM entirely because of this).
-    let control = DispatchQueue(label: "wmd-capture.control")
+    // Signals run on the control queue: the main thread is blocked in
+    // done.wait() below, so handlers on .main would never run (an earlier
+    // version ignored SIGTERM entirely because of this).
     let stopSignal: (Int32) -> Void = { sig in
         log("wmd-capture: signal \(sig), stopping")
         done.signal()
@@ -370,33 +405,8 @@ func runCapture(_ o: RunOptions) {
 
     let active = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
     log("wmd-capture: running \(active.width)x\(active.height) nv12 @ \(range.maxFrameRate) fps")
+    watch.writer = writer
 
-    // Watchdog. Stop when the parent pipeline is gone (we were orphaned and
-    // no frame came to hit EPIPE), and exit with an error when no frame was
-    // written for a while (permission pending, camera unplugged or stalled,
-    // or the reader stopped reading), so go2rtc restarts us instead of
-    // everyone waiting forever. It exits directly: a graceful stop could
-    // hang behind a write() blocked on a full pipe.
-    let parentAtStart = getppid()
-    var lastCount = 0
-    var lastProgress = Date()
-    let watchdog = DispatchSource.makeTimerSource(queue: control)
-    watchdog.schedule(deadline: .now() + 1, repeating: 1)
-    watchdog.setEventHandler {
-        if getppid() != parentAtStart {
-            log("wmd-capture: parent process exited; stopping")
-            exit(0)
-        }
-        let n = writer.frameCount
-        if n != lastCount {
-            lastCount = n
-            lastProgress = Date()
-        } else if o.stallTimeout > 0 && Date().timeIntervalSince(lastProgress) > o.stallTimeout {
-            log(String(format: "wmd-capture: no frames for %.0fs (camera permission pending, or camera stalled); exiting so it is restarted", o.stallTimeout))
-            exit(3)
-        }
-    }
-    watchdog.resume()
 
     let start = Date()
     if o.seconds > 0 {

@@ -11,7 +11,10 @@
 //
 // Usage: watchmydog-launcher <program> [args...]
 // Runs the program as a child, forwards SIGTERM/SIGINT/SIGHUP to it, and
-// exits with its exit status.
+// exits with its exit status. When the child exits, every other process
+// left in the launcher's process group (go2rtc, ffmpeg, wmd-capture
+// orphans) is stopped first, so nothing keeps holding the camera; launchd
+// does not do this for us.
 
 import Darwin
 import Foundation
@@ -54,10 +57,34 @@ if rc != 0 {
     exit(127)
 }
 
+/// Other live processes in our process group (we are its leader).
+func groupMembers() -> [pid_t] {
+    var pids = [pid_t](repeating: 0, count: 4096)
+    // Returns the number of PIDs written (not bytes, verified on macOS 26).
+    let count = proc_listpgrppids(getpgrp(), &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+    guard count > 0 else { return [] }
+    let me = getpid()
+    return pids.prefix(Int(count)).filter { $0 > 0 && $0 != me && kill($0, 0) == 0 }
+}
+
 DispatchQueue.global().async {
     var status: Int32 = 0
     while waitpid(childPID, &status, 0) == -1 && errno == EINTR {}
     let termsig = status & 0x7f
-    exit(termsig == 0 ? (status >> 8) & 0xff : 128 + termsig)
+    let code = termsig == 0 ? (status >> 8) & 0xff : 128 + termsig
+
+    // Only when we lead our own process group (true under launchd). Started
+    // by hand from a shell we would share the shell's group: leave it alone.
+    var left = getpgrp() == getpid() ? groupMembers() : []
+    if !left.isEmpty {
+        fputs("watchmydog-launcher: service exited (\(code)); stopping \(left.count) leftover process(es)\n", stderr)
+        for pid in left { kill(pid, SIGTERM) }
+        for _ in 0..<15 where !left.isEmpty {
+            usleep(100_000)
+            left = groupMembers()
+        }
+        for pid in left { kill(pid, SIGKILL) }
+    }
+    exit(code)
 }
 dispatchMain()

@@ -34,12 +34,17 @@ microphone permission without anyone at the Mac. Findings on this Mac mini (macO
   runs the service as its child, forwards SIGTERM/SIGINT/SIGHUP and exits with the child's status.
   The service, go2rtc, ffmpeg and wmd-capture inherit its permission. The install script copies the
   app only when its contents changed, so service updates never trigger new prompts.
+  When the service exits, the launcher stops every other process left in its process group
+  (SIGTERM, then SIGKILL after 1.5 s), because launchd did not: an ffmpeg from a previous agent
+  instance survived a restart. It only does this when it leads its own group, as under launchd.
 - **Keep awake.** The service holds an IOKit `PreventUserIdleSystemSleep` assertion named
   "watchmydog: serving the camera stream" while it runs (`keep_awake: true`, default). The kernel
   drops it if the process dies. The display still sleeps; manual sleep still works.
-- **Capture helper hardening.** Signals on a dedicated queue; a watchdog exits when the parent
-  disappears and exits with code 3 after 10 s without a written frame, so go2rtc restarts it; a
-  clear log line when camera permission is pending or denied.
+- **Capture helper hardening.** Signals on a dedicated queue; a watchdog, started before any
+  AVFoundation call (those block while a permission prompt waits), exits when the parent disappears
+  and exits with code 3 after 10 s without a written frame, so go2rtc restarts it; a clear log
+  line when camera permission is pending or denied. Verified: three stream attempts with the
+  permission pending leave no orphaned processes.
 - **`make doctor`** checks every host setting this depends on (sleep, keep-awake lock, power-failure
   restart, FileVault/auto-login, Tailscale and serve, agent, health, HTTPS, secret file mode) and
   explains each fix. It never changes settings.
