@@ -16,8 +16,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | done |
 | 2 | Tailscale remote access | done |
 | 3 | Control service supervises go2rtc, pause/resume | done |
-| 4 | Web client live view (WHEP player, reconnect, quality toggle) | built, awaiting manual check |
-| 5 | Auth + HTTPS | |
+| 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
+| 5 | Auth + HTTPS | in progress |
 | 6 | PWA + run at boot | |
 | 7 | Howl detection | |
 | 8 | Push notifications | |
