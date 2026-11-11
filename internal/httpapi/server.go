@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -216,8 +217,18 @@ func (d Deps) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
 	writeJSON(w, http.StatusOK, d.view(r, c))
 }
 
+func init() {
+	// Not in Go's built-in table; browsers expect this type for PWA manifests.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
+
 // spaHandler serves the built web client; unknown paths without a file
 // extension fall back to index.html so client-side routes work.
+//
+// Caching: Vite's /assets/ files are content-hashed, so they are immutable.
+// Everything else (index.html, sw.js, manifest, icons) must be revalidated
+// on every load, otherwise an installed app could keep running an old
+// version or an old service worker.
 func spaHandler(dir string) http.Handler {
 	fs := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +240,11 @@ func spaHandler(dir string) http.Handler {
 		p := filepath.Join(dir, filepath.Clean("/"+r.URL.Path))
 		if _, err := os.Stat(p); err != nil && filepath.Ext(r.URL.Path) == "" {
 			r.URL.Path = "/"
+		}
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		fs.ServeHTTP(w, r)
 	})

@@ -7,6 +7,7 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 - Plan and increments: [docs/PLAN.md](docs/PLAN.md)
 - Architecture decisions: [docs/adr/](docs/adr/)
 - Developer workflow: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+- Running it on the Mac mini: [docs/OPERATIONS.md](docs/OPERATIONS.md) (`make doctor`)
 
 ## Status
 
@@ -18,7 +19,7 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 3 | Control service supervises go2rtc, pause/resume | done |
 | 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
 | 5 | Auth + HTTPS (shared secret, tailscale serve) | done |
-| 6 | PWA + run at boot + keep the Mac awake | next |
+| 6 | PWA + run at boot + keep the Mac awake | built, awaiting manual check |
 | 7 | Howl detection | |
 | 8 | Push notifications | |
 | 9 | Recording and clips | |
@@ -40,7 +41,15 @@ make serve            # once: publish it on the tailnet over HTTPS
 curl localhost:8080/api/health
 ```
 
-Open `https://<mac-hostname>.<tailnet>.ts.net` on the phone and log in with the secret. The
+To run it permanently (starts at login, restarts on crash, keeps the Mac awake):
+
+```sh
+make install-agent    # then click Allow on the two WatchMyDog prompts on the Mac's screen, once
+make doctor           # checks the whole setup and explains fixes
+```
+
+Open `https://<mac-hostname>.<tailnet>.ts.net` on the phone and log in with the secret. In Chrome's
+menu, "Add to home screen" / "Install app" installs it like an app. The
 service listens on localhost only; `tailscale serve` provides HTTPS (docs/TAILSCALE.md). Every API
 and media route needs a session cookie (ADR-0005).
 
@@ -71,6 +80,7 @@ go2rtc standalone with `deploy/go2rtc.yaml` for troubleshooting the capture pipe
 cmd/watchmydog/   process entrypoint, wiring only
 internal/         Go packages (domain, ports, adapters, httpapi, config)
 capture/          wmd-capture, native macOS webcam capture helper (Swift)
+launcher/         WatchMyDog.app, stable parent that holds camera/mic permission (Swift)
 web/              TypeScript web client (Vite)
 deploy/           go2rtc config, launchd plist, install script
 docs/             plan, ADRs, developer guide

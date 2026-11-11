@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  watchmydog launchd agent (ADR-0006). Rendered by deploy/agent.sh, which
+  replaces the __PLACEHOLDERS__ with absolute paths. Do not edit the
+  installed copy in ~/Library/LaunchAgents; change this template and run
+  `make install-agent` again.
+
+  A per-user agent (not a system daemon) because camera and microphone
+  access belong to the logged-in user's session.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.watchmydog.agent</string>
+
+  <!-- The stable launcher in WatchMyDog.app runs the service as its child,
+       so camera/microphone permission stays granted across service updates
+       (ADR-0006). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__LAUNCHER__</string>
+    <string>__BIN__</string>
+    <string>-config</string>
+    <string>__CONFIG__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKDIR__</string>
+
+  <!-- launchd starts jobs with a minimal PATH; go2rtc, ffmpeg and
+       wmd-capture are found through this one. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+
+  <!-- Start at login, and restart whenever the process exits, crashes
+       included. ThrottleInterval spaces restarts if it keeps failing. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Live video: run with app-like priority, not background throttling. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <!-- Time for a clean shutdown (stops go2rtc and capture) before SIGKILL. -->
+  <key>ExitTimeOut</key>
+  <integer>20</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/watchmydog.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/watchmydog.log</string>
+</dict>
+</plist>

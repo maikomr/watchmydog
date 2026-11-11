@@ -122,6 +122,12 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** without cookie → 401 on API and media; login page works; phone shows the padlock with no warning. Repeat the latency check over HTTPS.
 
 ### 6. PWA + run at boot
+
+> Outcome note (2026-11-11): launchd-started processes need their own camera/microphone
+> permission, tied to the binary's signature, which changes with every Go build. The service now
+> runs under a small stable launcher app (`launcher/`, WatchMyDog.app). FileVault is on, so
+> unattended recovery after reboot is not possible without the owner's decision. See ADR-0006 and
+> docs/OPERATIONS.md.
 - `manifest.json`, service worker (app shell only, never cache media), icons. Install to home screen.
 - `deploy/launchd/com.watchmydog.agent.plist` (LaunchAgent in your login session, `KeepAlive`, logs to `~/Library/Logs/watchmydog/`). `deploy/install.sh` installs it. Mac mini set to auto-login.
 - **Camera-permission check (risk item):** launch from launchd and confirm macOS grants camera + mic to ffmpeg/go2rtc. If TCC refuses, fallback is wrapping the launcher in a minimal signed `.app` bundle (ADR-004 records the outcome).

@@ -8,7 +8,7 @@
 //
 // Usage:
 //   wmd-capture list                          JSON of permissions, devices, formats
-//   wmd-capture run --device NAME [--width W --height H --fps F --seconds S --adopt-format]
+//   wmd-capture run --device NAME [--width W --height H --fps F --seconds S --adopt-format --stall-timeout S]
 //                                             raw NV12 frames to stdout, logs to stderr
 //
 // Output is always W x H NV12 at the camera's rate. If the camera is in (or is
@@ -127,6 +127,7 @@ struct RunOptions {
     var fps: Double = 30
     var seconds: Double = 0 // 0 = until stdout closes or signal
     var adoptFormat = false // never reconfigure the camera; scale whatever it delivers
+    var stallTimeout: Double = 10 // exit when no frame arrived for this long (0 = never)
 }
 
 func parseRun(_ args: ArraySlice<String>) -> RunOptions {
@@ -148,6 +149,7 @@ func parseRun(_ args: ArraySlice<String>) -> RunOptions {
         case "--fps": o.fps = number(value(), as: Double.self)
         case "--seconds": o.seconds = number(value(), as: Double.self)
         case "--adopt-format": o.adoptFormat = true
+        case "--stall-timeout": o.stallTimeout = number(value(), as: Double.self)
         default: fail("unknown option \(a)")
         }
     }
@@ -159,6 +161,13 @@ let nv12 = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
 
 final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private(set) var frames = 0
+    private let countLock = NSLock()
+    /// Frames written so far; safe to read from any thread.
+    var frameCount: Int {
+        countLock.lock()
+        defer { countLock.unlock() }
+        return frames
+    }
     private(set) var dropped = 0
     private(set) var scaled = 0
     private var closed = false
@@ -243,7 +252,9 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
                 }
             }
         }
+        countLock.lock()
         frames += 1
+        countLock.unlock()
     }
 
     func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
@@ -258,6 +269,17 @@ func runCapture(_ o: RunOptions) {
         fail("device not found: \(o.device)")
     }
     log("wmd-capture: device \(dev.localizedName) inUseByAnotherApplication=\(dev.isInUseByAnotherApplication)")
+
+    // Permission belongs to the responsible process: WatchMyDog.app under
+    // launchd (ADR-0006), the terminal app when run by hand.
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .denied, .restricted:
+        fail("camera access denied: allow WatchMyDog in System Settings > Privacy & Security > Camera", code: 4)
+    case .notDetermined:
+        log("wmd-capture: camera permission not decided yet; macOS is asking on the Mac's screen (click Allow)")
+    default:
+        break
+    }
 
     // Choose the camera format: 4:2:0 layout, fast enough for the requested
     // fps, then exact size if available, else the smallest size that covers
@@ -297,10 +319,17 @@ func runCapture(_ o: RunOptions) {
     guard session.canAddOutput(output) else { fail("cannot add video output") }
     session.addOutput(output)
 
-    let stopSignal: (Int32) -> Void = { _ in done.signal() }
-    let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-    let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    // Signals and the watchdog run on their own queue: the main thread is
+    // blocked in done.wait() below, so handlers on .main would never run
+    // (an earlier version ignored SIGTERM entirely because of this).
+    let control = DispatchQueue(label: "wmd-capture.control")
+    let stopSignal: (Int32) -> Void = { sig in
+        log("wmd-capture: signal \(sig), stopping")
+        done.signal()
+    }
     signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
+    let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: control)
+    let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: control)
     sigint.setEventHandler { stopSignal(SIGINT) }; sigint.resume()
     sigterm.setEventHandler { stopSignal(SIGTERM) }; sigterm.resume()
 
@@ -342,6 +371,33 @@ func runCapture(_ o: RunOptions) {
     let active = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
     log("wmd-capture: running \(active.width)x\(active.height) nv12 @ \(range.maxFrameRate) fps")
 
+    // Watchdog. Stop when the parent pipeline is gone (we were orphaned and
+    // no frame came to hit EPIPE), and exit with an error when no frame was
+    // written for a while (permission pending, camera unplugged or stalled,
+    // or the reader stopped reading), so go2rtc restarts us instead of
+    // everyone waiting forever. It exits directly: a graceful stop could
+    // hang behind a write() blocked on a full pipe.
+    let parentAtStart = getppid()
+    var lastCount = 0
+    var lastProgress = Date()
+    let watchdog = DispatchSource.makeTimerSource(queue: control)
+    watchdog.schedule(deadline: .now() + 1, repeating: 1)
+    watchdog.setEventHandler {
+        if getppid() != parentAtStart {
+            log("wmd-capture: parent process exited; stopping")
+            exit(0)
+        }
+        let n = writer.frameCount
+        if n != lastCount {
+            lastCount = n
+            lastProgress = Date()
+        } else if o.stallTimeout > 0 && Date().timeIntervalSince(lastProgress) > o.stallTimeout {
+            log(String(format: "wmd-capture: no frames for %.0fs (camera permission pending, or camera stalled); exiting so it is restarted", o.stallTimeout))
+            exit(3)
+        }
+    }
+    watchdog.resume()
+
     let start = Date()
     if o.seconds > 0 {
         _ = done.wait(timeout: .now() + o.seconds)
@@ -351,7 +407,7 @@ func runCapture(_ o: RunOptions) {
     session.stopRunning()
     let elapsed = Date().timeIntervalSince(start)
     log(String(format: "wmd-capture: stopped after %.1fs, %d frames (%.1f fps), %d scaled, %d dropped",
-               elapsed, writer.frames, Double(writer.frames) / max(elapsed, 0.001), writer.scaled, writer.dropped))
+               elapsed, writer.frameCount, Double(writer.frameCount) / max(elapsed, 0.001), writer.scaled, writer.dropped))
 }
 
 // MARK: - main
@@ -363,6 +419,6 @@ case "list":
 case "run":
     runCapture(parseRun(argv.dropFirst(2)))
 default:
-    log("usage: wmd-capture list | run --device NAME [--width W] [--height H] [--fps F] [--seconds S] [--adopt-format]")
+    log("usage: wmd-capture list | run --device NAME [--width W] [--height H] [--fps F] [--seconds S] [--adopt-format] [--stall-timeout S]")
     exit(2)
 }

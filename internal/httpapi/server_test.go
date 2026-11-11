@@ -233,3 +233,36 @@ func TestUnknownAPIRouteIs404(t *testing.T) {
 		t.Errorf("status = %d, want 404", rr.Code)
 	}
 }
+
+func TestStaticCachingAndPWAFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sw.js"), []byte("self.addEventListener('fetch',()=>{})"), 0o644)
+	os.WriteFile(filepath.Join(dir, "manifest.webmanifest"), []byte(`{"name":"watchmydog"}`), 0o644)
+	os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
+	os.WriteFile(filepath.Join(dir, "assets", "main-abc123.js"), []byte("js"), 0o644)
+	h := newTest(t, newEngine(), dir)
+
+	cases := []struct {
+		path, cacheControl, contentType string
+	}{
+		{"/", "no-cache", "text/html"},
+		{"/clips", "no-cache", "text/html"},
+		{"/sw.js", "no-cache", "text/javascript"},
+		{"/manifest.webmanifest", "no-cache", "application/manifest+json"},
+		{"/assets/main-abc123.js", "public, max-age=31536000, immutable", "text/javascript"},
+	}
+	for _, c := range cases {
+		rr := do(h, http.MethodGet, c.path)
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s: status %d", c.path, rr.Code)
+			continue
+		}
+		if got := rr.Header().Get("Cache-Control"); got != c.cacheControl {
+			t.Errorf("%s: Cache-Control = %q, want %q", c.path, got, c.cacheControl)
+		}
+		if got := rr.Header().Get("Content-Type"); !strings.HasPrefix(got, c.contentType) {
+			t.Errorf("%s: Content-Type = %q, want %s", c.path, got, c.contentType)
+		}
+	}
+}

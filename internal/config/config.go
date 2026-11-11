@@ -28,6 +28,9 @@ type Config struct {
 	DataDir string `yaml:"data_dir"`
 	// WebDir is the built web client to serve at "/". Empty disables it.
 	WebDir string `yaml:"web_dir"`
+	// KeepAwake makes the service prevent idle system sleep while it runs,
+	// so the host stays reachable (a sleeping Mac is offline for Tailscale).
+	KeepAwake bool `yaml:"keep_awake"`
 	// Auth configures login.
 	Auth Auth `yaml:"auth"`
 	// Engine configures the go2rtc media engine.
@@ -96,6 +99,7 @@ func Defaults() Config {
 		ListenAddr: "127.0.0.1:8080",
 		DataDir:    "data",
 		WebDir:     "web/dist",
+		KeepAwake:  true,
 		Auth:       Auth{SessionTTL: 30 * 24 * time.Hour},
 		Engine: Engine{
 			Bin:        "go2rtc",

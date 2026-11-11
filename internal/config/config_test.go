@@ -76,6 +76,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.SessionTTL != 30*24*time.Hour || cfg.Auth.Secret != testSecret {
 		t.Errorf("auth = %+v", cfg.Auth)
 	}
+	if !cfg.KeepAwake {
+		t.Error("keep_awake must default to true")
+	}
 	if len(cfg.Cameras) != 0 {
 		t.Errorf("expected no cameras by default")
 	}
@@ -245,5 +248,15 @@ func TestDeployExampleConfigParses(t *testing.T) {
 	}
 	if cfg.Auth.Disabled {
 		t.Error("the example config must not disable auth")
+	}
+}
+
+func TestKeepAwakeCanBeDisabled(t *testing.T) {
+	cfg, err := Load([]string{"-config", "c.yaml"}, envSecret, files(map[string]string{"c.yaml": "keep_awake: false\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.KeepAwake {
+		t.Error("keep_awake: false must be honoured")
 	}
 }

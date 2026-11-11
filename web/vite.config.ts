@@ -14,6 +14,14 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      // Two entries: the app, and the service worker, which must live at a
+      // fixed, unhashed URL (/sw.js) to control the whole origin.
+      input: { main: "index.html", sw: "src/sw/sw.ts" },
+      output: {
+        entryFileNames: (chunk) => (chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js"),
+      },
+    },
   },
   test: {
     environment: "node",

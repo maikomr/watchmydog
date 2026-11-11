@@ -19,6 +19,7 @@ import (
 
 	"github.com/maikomr/watchmydog/internal/adapters/auth/sharedsecret"
 	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
+	"github.com/maikomr/watchmydog/internal/adapters/power"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
 	"github.com/maikomr/watchmydog/internal/httpapi"
@@ -60,6 +61,19 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Keep the host awake while serving (ADR-0006). Released on exit; the
+	// kernel also drops it if the process dies.
+	if cfg.KeepAwake {
+		if !power.Supported() {
+			logger.Warn("keep_awake is not implemented on this platform")
+		} else if a, err := power.PreventIdleSleep("watchmydog: serving the camera stream"); err != nil {
+			logger.Error("could not prevent idle sleep; the host may go offline when idle", "err", err)
+		} else {
+			defer a.Release()
+			logger.Info("preventing idle system sleep while running")
+		}
+	}
 
 	// Media engine: supervised go2rtc process.
 	engine := go2rtc.New(go2rtc.Settings{

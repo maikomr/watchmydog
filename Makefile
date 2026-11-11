@@ -8,7 +8,7 @@ COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS  := -X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
             -X $(MODULE)/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture install-capture go2rtc-dev secret serve serve-off
+.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture launcher install-capture go2rtc-dev secret serve serve-off install-agent uninstall-agent restart-agent agent-status logs doctor
 
 all: check build
 
@@ -45,6 +45,15 @@ bin/wmd-capture: capture/wmd-capture/main.swift
 	mkdir -p bin
 	swiftc -O -o $@ $<
 
+## launcher: build WatchMyDog.app, the stable parent that holds camera/mic permission (ADR-0006)
+launcher: bin/WatchMyDog.app/Contents/MacOS/watchmydog-launcher
+
+bin/WatchMyDog.app/Contents/MacOS/watchmydog-launcher: launcher/main.swift launcher/Info.plist
+	mkdir -p bin/WatchMyDog.app/Contents/MacOS
+	swiftc -O -o $@ launcher/main.swift
+	cp launcher/Info.plist bin/WatchMyDog.app/Contents/Info.plist
+	codesign --force --sign - --identifier com.watchmydog.launcher bin/WatchMyDog.app
+
 ## install-capture: install the capture helper into ~/.local/bin (used by go2rtc)
 install-capture: bin/wmd-capture
 	install -m 755 bin/wmd-capture $(HOME)/.local/bin/wmd-capture
@@ -65,6 +74,30 @@ serve:
 ## serve-off: stop publishing the service on the tailnet
 serve-off:
 	tailscale serve --https=443 off
+
+## install-agent: build and (re)install the launchd agent: starts at login, restarts on crash
+install-agent:
+	deploy/agent.sh install
+
+## uninstall-agent: stop and remove the launchd agent
+uninstall-agent:
+	deploy/agent.sh uninstall
+
+## restart-agent: restart the running service
+restart-agent:
+	deploy/agent.sh restart
+
+## agent-status: show whether the agent is running
+agent-status:
+	deploy/agent.sh status
+
+## logs: follow the service log
+logs:
+	tail -n 50 -f $(HOME)/Library/Logs/watchmydog/watchmydog.log
+
+## doctor: check the Mac's settings and the service, and explain fixes
+doctor:
+	@deploy/doctor.sh
 
 ## web-install: install web client dependencies (uses the lockfile)
 web-install:

@@ -45,4 +45,12 @@ async function boot(): Promise<void> {
   }
 }
 
+// The service worker makes the app installable and opens it offline. Only
+// in production builds: during `vite dev` it would cache dev-server files.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((err: unknown) => {
+    console.warn("service worker registration failed", err);
+  });
+}
+
 void boot();
