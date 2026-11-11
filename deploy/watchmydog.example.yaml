@@ -33,5 +33,8 @@ cameras:
       height: 720
       fps: 30
       bitrate_kbps: 2500
+      low:                               # optional reduced-quality stream for slow networks
+        width: 640
+        height: 360
     audio:
       device: REDRAGON Live Camera Audio # from `ffmpeg -f avfoundation -list_devices true -i ""`

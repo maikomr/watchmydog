@@ -61,7 +61,7 @@ func (f *fakeEngine) MediaHandler() http.Handler {
 func dog() domain.Camera {
 	return domain.Camera{
 		ID: "dog", Name: "Living room",
-		Video: domain.VideoSource{Device: "cam", Width: 1280, Height: 720, FPS: 30, BitrateKbps: 2500},
+		Video: domain.VideoSource{Device: "cam", Width: 1280, Height: 720, FPS: 30, BitrateKbps: 2500, Low: &domain.LowRes{Width: 640, Height: 360}},
 		Audio: domain.AudioSource{Device: "mic"},
 	}
 }
@@ -140,6 +140,9 @@ func TestListAndGetCameras(t *testing.T) {
 	c := list.Cameras[0]
 	if c.ID != "dog" || c.State != "active" || c.Consumers != 1 || !c.HasAudio || c.Stream != "dog" || c.Width != 1280 {
 		t.Errorf("camera view = %+v", c)
+	}
+	if len(c.Streams) != 2 || c.Streams[0].Quality != "high" || c.Streams[1].Name != "dog_low" || c.Streams[1].Width != 640 {
+		t.Errorf("stream variants = %+v", c.Streams)
 	}
 
 	rr = do(h, http.MethodGet, "/api/cameras/dog")

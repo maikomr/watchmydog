@@ -112,3 +112,35 @@ func TestShellQuoting(t *testing.T) {
 		t.Errorf("shellQuoteDouble = %s", got)
 	}
 }
+
+func TestRenderConfigLowVariant(t *testing.T) {
+	c := dogCamera()
+	c.Video.Low = &domain.LowRes{Width: 640, Height: 360}
+	out, err := RenderConfig(testSettings(), []domain.Camera{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Streams map[string][]string `yaml:"streams"`
+	}
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	low := parsed.Streams["dog_low"]
+	if len(low) != 1 {
+		t.Fatalf("low stream = %v", low)
+	}
+	for _, want := range []string{
+		"exec:/opt/homebrew/bin/ffmpeg", "-i rtsp://127.0.0.1:8554/dog", "-vf scale=640:-2",
+		"-c:v h264_videotoolbox", "-b:v 625k", "-g 60", "-c:a copy", "-f rtsp {output}#killsignal=15",
+	} {
+		if !strings.Contains(low[0], want) {
+			t.Errorf("low stream missing %q: %s", want, low[0])
+		}
+	}
+	c.Audio.Device = ""
+	out, _ = RenderConfig(testSettings(), []domain.Camera{c})
+	if !strings.Contains(string(out), " -an -f rtsp") {
+		t.Errorf("low stream without audio should disable audio:\n%s", out)
+	}
+}

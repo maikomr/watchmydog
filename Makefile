@@ -8,7 +8,7 @@ COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS  := -X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
             -X $(MODULE)/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: all build run test lint fmt web web-install web-dev clean check capture install-capture go2rtc-dev
+.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture install-capture go2rtc-dev
 
 all: check build
 
@@ -18,8 +18,8 @@ build:
 
 CONFIG ?= deploy/watchmydog.local.yaml
 
-## run: run the Go service from source with $(CONFIG) (Ctrl-C to stop)
-run: install-capture
+## run: build the web client, then run the Go service with $(CONFIG) (Ctrl-C to stop)
+run: install-capture web
 	@test -f $(CONFIG) || cp deploy/watchmydog.example.yaml $(CONFIG)
 	PATH="$(HOME)/.local/bin:/opt/homebrew/bin:$$PATH" go run -ldflags "$(LDFLAGS)" ./cmd/watchmydog -config $(CONFIG)
 
@@ -35,8 +35,8 @@ lint:
 fmt:
 	gofmt -l -w cmd internal
 
-## check: everything CI runs
-check: fmt lint test
+## check: everything CI runs (Go and web)
+check: fmt lint test web-check
 
 ## capture: build the native macOS capture helper into bin/wmd-capture
 capture: bin/wmd-capture
@@ -64,6 +64,14 @@ web:
 ## web-dev: run the Vite dev server with API proxy to :8080
 web-dev:
 	cd web && npm run dev
+
+## web-test: run web unit tests (vitest)
+web-test:
+	cd web && npm test
+
+## web-check: type-check and test the web client
+web-check:
+	cd web && npm run typecheck && npm test
 
 ## clean: remove build outputs
 clean:

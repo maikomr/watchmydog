@@ -89,14 +89,26 @@ type cameraView struct {
 	State     string `json:"state"`
 	Consumers int    `json:"consumers"`
 	Detail    string `json:"detail,omitempty"`
-	// Stream names the engine stream to request under /media/.
+	// Stream names the engine stream to request under /media/ (best quality).
 	Stream string `json:"stream"`
+	// Streams lists every quality variant, best first.
+	Streams []streamView `json:"streams"`
+}
+
+type streamView struct {
+	Quality string `json:"quality"`
+	Name    string `json:"name"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
 }
 
 func (d Deps) view(r *http.Request, c domain.Camera) cameraView {
 	v := cameraView{
 		ID: string(c.ID), Name: c.Name, Width: c.Video.Width, Height: c.Video.Height, FPS: c.Video.FPS,
 		HasAudio: c.HasAudio(), State: string(domain.StreamError), Stream: string(c.ID),
+	}
+	for _, sv := range c.Variants() {
+		v.Streams = append(v.Streams, streamView{Quality: string(sv.Quality), Name: sv.Name, Width: sv.Width, Height: sv.Height})
 	}
 	if d.Engine == nil {
 		v.Detail = "engine not configured"

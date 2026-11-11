@@ -60,6 +60,10 @@ type Camera struct {
 		Height      int    `yaml:"height"`
 		FPS         int    `yaml:"fps"`
 		BitrateKbps int    `yaml:"bitrate_kbps"`
+		Low         *struct {
+			Width  int `yaml:"width"`
+			Height int `yaml:"height"`
+		} `yaml:"low"`
 	} `yaml:"video"`
 	Audio struct {
 		Device string `yaml:"device"`
@@ -166,7 +170,7 @@ func (c Config) Validate() error {
 
 // Domain converts the YAML camera into the domain entity.
 func (c Camera) Domain() domain.Camera {
-	return domain.Camera{
+	cam := domain.Camera{
 		ID:   domain.CameraID(c.ID),
 		Name: c.Name,
 		Video: domain.VideoSource{
@@ -178,6 +182,10 @@ func (c Camera) Domain() domain.Camera {
 		},
 		Audio: domain.AudioSource{Device: c.Audio.Device},
 	}
+	if c.Video.Low != nil {
+		cam.Video.Low = &domain.LowRes{Width: c.Video.Low.Width, Height: c.Video.Low.Height}
+	}
+	return cam
 }
 
 // DomainCameras converts all configured cameras.

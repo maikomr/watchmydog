@@ -67,3 +67,27 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+func TestVariants(t *testing.T) {
+	c := validCamera()
+	v := c.Variants()
+	if len(v) != 1 || v[0].Quality != QualityHigh || v[0].Name != "dog" || v[0].Width != 1280 {
+		t.Errorf("variants without low = %+v", v)
+	}
+	c.Video.Low = &LowRes{Width: 640, Height: 360}
+	v = c.Variants()
+	if len(v) != 2 || v[1].Quality != QualityLow || v[1].Name != "dog_low" || v[1].Width != 640 {
+		t.Errorf("variants with low = %+v", v)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("low variant should validate: %v", err)
+	}
+	c.Video.Low = &LowRes{Width: 1920, Height: 1080}
+	if err := c.Validate(); err == nil {
+		t.Error("low wider than main must be rejected")
+	}
+	c.Video.Low = &LowRes{}
+	if err := c.Validate(); err == nil {
+		t.Error("zero low size must be rejected")
+	}
+}

@@ -31,6 +31,44 @@ type VideoSource struct {
 	FPS    int
 	// BitrateKbps is the target H.264 bitrate.
 	BitrateKbps int
+	// Low, when set, adds a second, down-scaled stream for slow networks.
+	Low *LowRes
+}
+
+// LowRes describes the reduced-quality variant of a camera's video. It is
+// derived from the main stream by the engine (no second capture).
+type LowRes struct {
+	Width  int
+	Height int
+}
+
+// StreamQuality names a stream variant of a camera.
+type StreamQuality string
+
+const (
+	QualityHigh StreamQuality = "high"
+	QualityLow  StreamQuality = "low"
+)
+
+// StreamVariant is one playable stream of a camera.
+type StreamVariant struct {
+	Quality StreamQuality
+	// Name is the engine's stream name to request under /media/.
+	Name   string
+	Width  int
+	Height int
+}
+
+// LowStreamName is the engine stream name of the low-res variant.
+func (c Camera) LowStreamName() string { return string(c.ID) + "_low" }
+
+// Variants lists the playable streams of the camera, best quality first.
+func (c Camera) Variants() []StreamVariant {
+	v := []StreamVariant{{Quality: QualityHigh, Name: string(c.ID), Width: c.Video.Width, Height: c.Video.Height}}
+	if c.Video.Low != nil {
+		v = append(v, StreamVariant{Quality: QualityLow, Name: c.LowStreamName(), Width: c.Video.Low.Width, Height: c.Video.Low.Height})
+	}
+	return v
 }
 
 // AudioSource describes how the audio of a camera is captured.
@@ -68,6 +106,13 @@ func (c Camera) Validate() error {
 	}
 	if c.Video.BitrateKbps <= 0 {
 		errs = append(errs, fmt.Errorf("camera %s: video bitrate_kbps must be positive", c.ID))
+	}
+	if l := c.Video.Low; l != nil {
+		if l.Width <= 0 || l.Height <= 0 {
+			errs = append(errs, fmt.Errorf("camera %s: video.low width/height must be positive", c.ID))
+		} else if l.Width >= c.Video.Width {
+			errs = append(errs, fmt.Errorf("camera %s: video.low width must be smaller than the main width", c.ID))
+		}
 	}
 	return errors.Join(errs...)
 }

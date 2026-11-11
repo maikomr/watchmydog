@@ -52,6 +52,9 @@ func RenderConfig(s Settings, cameras []domain.Camera) ([]byte, error) {
 			st.Sources = append(st.Sources, audioSource(c))
 		}
 		streams = append(streams, st)
+		if c.Video.Low != nil {
+			streams = append(streams, stream{Name: c.LowStreamName(), Sources: []string{lowSource(s, c)}})
+		}
 	}
 
 	var buf bytes.Buffer
@@ -81,6 +84,27 @@ func videoSource(s Settings, c domain.Camera) string {
 	// go2rtc splits the exec line itself (no shell), so the pipeline runs
 	// under sh -c. killsignal/killtimeout let go2rtc stop it cleanly.
 	return fmt.Sprintf(`exec:sh -c %s#killsignal=15#killtimeout=5`, shellQuoteDouble(cmd))
+}
+
+// lowSource derives the reduced-quality stream from the main stream: ffmpeg
+// re-reads it from go2rtc's RTSP server, decodes in software (VideoToolbox
+// hardware decoding of this stream fails: "hardware accelerator failed to
+// decode picture"), scales to the low width keeping the aspect ratio,
+// re-encodes with VideoToolbox and pushes it back into go2rtc. Audio is
+// copied. Bitrate is a quarter of the main stream's.
+func lowSource(s Settings, c domain.Camera) string {
+	l := c.Video.Low
+	cmd := fmt.Sprintf(
+		`exec:%s -hide_banner -loglevel error -fflags nobuffer -flags low_delay -rtsp_transport tcp`+
+			` -i rtsp://%s/%s -vf scale=%d:-2 -c:v h264_videotoolbox -realtime 1 -b:v %dk -g %d -bf 0 -profile:v main`,
+		s.FFmpegBin, s.RTSPAddr, c.ID, l.Width, max(c.Video.BitrateKbps/4, 200), 2*c.Video.FPS,
+	)
+	if c.HasAudio() {
+		cmd += " -c:a copy"
+	} else {
+		cmd += " -an"
+	}
+	return cmd + " -f rtsp {output}#killsignal=15#killtimeout=5"
 }
 
 // audioSource builds the ffmpeg:device source for a camera's audio.

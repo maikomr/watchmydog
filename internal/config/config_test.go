@@ -30,6 +30,9 @@ cameras:
       height: 720
       fps: 30
       bitrate_kbps: 2500
+      low:
+        width: 640
+        height: 360
     audio:
       device: REDRAGON Live Camera Audio
 `
@@ -73,6 +76,9 @@ func TestLoadYAMLFileAndRelativePaths(t *testing.T) {
 	cams := cfg.DomainCameras()
 	if len(cams) != 1 || cams[0].ID != "dog" || cams[0].Video.Width != 1280 || !cams[0].HasAudio() {
 		t.Errorf("cameras = %+v", cams)
+	}
+	if cams[0].Video.Low == nil || cams[0].Video.Low.Width != 640 {
+		t.Errorf("low variant not loaded: %+v", cams[0].Video)
 	}
 }
 
