@@ -35,7 +35,9 @@ The agent starts at login and restarts the service if it exits for any reason.
    prompts on the Mac's screen for **WatchMyDog**. Click Allow on both. They are listed afterwards
    under System Settings > Privacy & Security > Camera / Microphone. Service updates do not ask
    again.
-4. **Tailscale:** in the Tailscale menu, make sure it is set to launch at login. See
+4. **Tailscale:** menu bar icon > Settings > turn on "Launch Tailscale at login". Without it the
+   service starts after a reboot but the Mac stays off the tailnet (seen on 2026-11-11: state
+   "Stopped" until the app was opened). See
    [TAILSCALE.md](TAILSCALE.md) for `make serve`.
 
 ## Reboots, power cuts and FileVault
