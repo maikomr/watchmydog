@@ -37,9 +37,50 @@ type Config struct {
 	Engine Engine `yaml:"go2rtc"`
 	// Sound configures noise detection on the cameras' microphones.
 	Sound Sound `yaml:"sound"`
+	// Push configures notifications to the owner's devices.
+	Push Push `yaml:"push"`
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
 }
+
+// Push is the notification section (ADR-0008).
+type Push struct {
+	// Enabled turns notifications on.
+	Enabled bool `yaml:"enabled"`
+	// Cooldown is the minimum time between two notifications for the same
+	// camera. 0 notifies about every event.
+	Cooldown time.Duration `yaml:"cooldown"`
+	// QuietHours is a daily time span, in the Mac's local time, without
+	// notifications. Events are still detected and stored. Leave both
+	// empty for none.
+	QuietHours QuietHours `yaml:"quiet_hours"`
+	// Contact is an email address or https URL that is sent to the browser
+	// vendor's push service with every notification, so its operator could
+	// reach the sender. The default is a placeholder.
+	Contact string `yaml:"contact"`
+}
+
+// QuietHours are two clock times like "23:00" and "07:00".
+type QuietHours struct {
+	Start string `yaml:"start"`
+	End   string `yaml:"end"`
+}
+
+// Window returns the quiet hours as a domain value, or nil when not set.
+func (q QuietHours) Window() (*domain.DailyWindow, error) {
+	if q.Start == "" && q.End == "" {
+		return nil, nil
+	}
+	w, err := domain.ParseDailyWindow(q.Start, q.End)
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// VAPIDKeysPath is the file with the key pair that signs notifications. It
+// is created on first start.
+func (c Config) VAPIDKeysPath() string { return filepath.Join(c.DataDir, "vapid.json") }
 
 // Sound is the noise detection section (ADR-0007). Levels are in dBFS:
 // 0 is the loudest the microphone can report, a quiet room is around -50.
@@ -137,6 +178,12 @@ func Defaults() Config {
 			HysteresisDB:  6,
 			MinDuration:   time.Second,
 			QuietTime:     5 * time.Second,
+		},
+		Push: Push{
+			Enabled:  true,
+			Cooldown: 5 * time.Minute,
+			// ".invalid" can never be a real domain (RFC 2606).
+			Contact: "watchmydog@example.invalid",
 		},
 	}
 }
@@ -246,6 +293,18 @@ func (c Config) Validate() error {
 		}
 		if s.QuietTime < 100*time.Millisecond || s.QuietTime > 10*time.Minute {
 			errs = append(errs, errors.New("sound.quiet_time must be between 100ms and 10m"))
+		}
+	}
+	if p := c.Push; p.Enabled {
+		if p.Cooldown < 0 || p.Cooldown > 24*time.Hour {
+			errs = append(errs, errors.New("push.cooldown must be between 0 and 24h"))
+		}
+		if _, err := p.QuietHours.Window(); err != nil {
+			errs = append(errs, fmt.Errorf("push.quiet_hours: %w", err))
+		}
+		contact := strings.TrimPrefix(p.Contact, "mailto:")
+		if !strings.HasPrefix(contact, "https://") && !strings.Contains(contact, "@") {
+			errs = append(errs, errors.New("push.contact must be an email address or an https URL"))
 		}
 	}
 	seen := map[string]bool{}

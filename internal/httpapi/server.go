@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maikomr/watchmydog/internal/app/alerts"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
@@ -38,6 +39,9 @@ type Deps struct {
 	// /api/events routes.
 	Monitor *monitor.Service
 
+	// Alerts manages notification subscriptions. Nil disables the
+	// /api/push routes.
+	Alerts *alerts.Service
 	// Auth verifies logins and sessions. Nil disables authentication.
 	Auth ports.Authenticator
 	// LoginMaxFailures and LoginWindow tune login rate limiting
@@ -81,6 +85,12 @@ func NewHandler(d Deps) http.Handler {
 	if d.Monitor != nil {
 		mux.Handle("GET /api/events", d.protect(http.HandlerFunc(d.handleListEvents)))
 		mux.Handle("GET /api/events/stream", d.protect(http.HandlerFunc(d.handleEventStream)))
+	}
+	if d.Alerts != nil {
+		mux.Handle("GET /api/push/config", d.protect(http.HandlerFunc(d.handlePushConfig)))
+		mux.Handle("POST /api/push/subscribe", d.protect(http.HandlerFunc(d.handlePushSubscribe)))
+		mux.Handle("POST /api/push/unsubscribe", d.protect(http.HandlerFunc(d.handlePushUnsubscribe)))
+		mux.Handle("POST /api/push/test", d.protect(http.HandlerFunc(d.handlePushTest)))
 	}
 	if d.Engine != nil {
 		// Player endpoints of the engine, e.g. /media/api/webrtc?src=dog.

@@ -1,4 +1,5 @@
-// Package storetest is the contract every ports.EventStore must fulfil. Each
+// Package storetest is the contract every ports.EventStore (Run) and
+// ports.SubscriptionStore (RunSubscriptions) must fulfil. Each
 // adapter's test calls Run, so SQLite, the in-memory fake and any future
 // store (Postgres) are held to the same behaviour.
 package storetest
@@ -139,6 +140,83 @@ func Run(t *testing.T, newStore func(t *testing.T) ports.EventStore) {
 		}
 		if n, _ := s.CloseOpenEvents(ctx); n != 0 {
 			t.Errorf("second call closed %d", n)
+		}
+	})
+}
+
+// RunSubscriptions exercises a fresh, empty subscription store.
+func RunSubscriptions(t *testing.T, newStore func(t *testing.T) ports.SubscriptionStore) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	sub := func(name string, age time.Duration) domain.PushSubscription {
+		return domain.PushSubscription{
+			Endpoint: "https://push.example/" + name, P256DH: "key-" + name, Auth: "auth-" + name,
+			CreatedAt: t0.Add(age),
+		}
+	}
+	list := func(t *testing.T, s ports.SubscriptionStore) []domain.PushSubscription {
+		t.Helper()
+		got, err := s.ListSubscriptions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	t.Run("empty store lists nothing, not nil", func(t *testing.T) {
+		if got := list(t, newStore(t)); got == nil || len(got) != 0 {
+			t.Fatalf("got %#v, want empty non-nil slice", got)
+		}
+	})
+
+	t.Run("save and list oldest first", func(t *testing.T) {
+		s := newStore(t)
+		for _, x := range []domain.PushSubscription{sub("b", time.Minute), sub("a", 0)} {
+			if err := s.SaveSubscription(ctx, x); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got := list(t, s)
+		if len(got) != 2 || got[0] != sub("a", 0) || got[1] != sub("b", time.Minute) {
+			t.Fatalf("got %+v", got)
+		}
+	})
+
+	t.Run("saving the same endpoint replaces keys and keeps the creation time", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.SaveSubscription(ctx, sub("a", 0)); err != nil {
+			t.Fatal(err)
+		}
+		again := sub("a", time.Hour)
+		again.P256DH, again.Auth = "new-key", "new-auth"
+		if err := s.SaveSubscription(ctx, again); err != nil {
+			t.Fatal(err)
+		}
+		got := list(t, s)
+		if len(got) != 1 {
+			t.Fatalf("got %d subscriptions, want 1", len(got))
+		}
+		if got[0].P256DH != "new-key" || got[0].Auth != "new-auth" || !got[0].CreatedAt.Equal(t0) {
+			t.Errorf("got %+v", got[0])
+		}
+	})
+
+	t.Run("delete removes only that endpoint; unknown is fine", func(t *testing.T) {
+		s := newStore(t)
+		for _, x := range []domain.PushSubscription{sub("a", 0), sub("b", time.Minute)} {
+			if err := s.SaveSubscription(ctx, x); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.DeleteSubscription(ctx, sub("a", 0).Endpoint); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteSubscription(ctx, "https://push.example/never-seen"); err != nil {
+			t.Errorf("deleting an unknown endpoint: %v", err)
+		}
+		got := list(t, s)
+		if len(got) != 1 || got[0].Endpoint != sub("b", 0).Endpoint {
+			t.Fatalf("got %+v", got)
 		}
 	})
 }

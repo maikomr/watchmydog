@@ -10,3 +10,7 @@ import (
 func TestContract(t *testing.T) {
 	storetest.Run(t, func(*testing.T) ports.EventStore { return New() })
 }
+
+func TestSubscriptionContract(t *testing.T) {
+	storetest.RunSubscriptions(t, func(*testing.T) ports.SubscriptionStore { return New() })
+}

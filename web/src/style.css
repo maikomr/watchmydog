@@ -147,6 +147,10 @@ video {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+/* Notifications switch */
+.notify-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.notify-note { margin: 8px 0 0; font-size: 0.9rem; }
+
 .events-note { margin: 0; font-size: 0.9rem; }
 .events { list-style: none; margin: 0; padding: 0; }
 .events li {

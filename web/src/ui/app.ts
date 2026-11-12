@@ -3,9 +3,11 @@
 
 import { api, isUnauthorized, type Camera, type SoundEvent, type StreamVariant } from "../api";
 import { LivePlayer, type PlayerState, type PlayerStats } from "../player/player";
+import { browserPushEnv, describePush, PushControl, type PushStatus } from "../push/push";
 import { describeEvent, formatWhen, levelFraction, mergeEvent } from "../sound/format";
 import { SoundStream, type SoundHello, type SoundLevel } from "../sound/stream";
 import { el } from "./dom";
+import { pickCamera } from "./route";
 
 const QUALITY_KEY = "wmd.quality";
 const CAMERA_POLL_MS = 10_000;
@@ -17,6 +19,11 @@ export interface AppHooks {
   onUnauthorized: () => void;
   /** The user asked to log out. */
   onLogout: () => void;
+  /**
+   * Resolves to the active service worker registration, or null when there
+   * is none (development, unsupported browser). Needed for notifications.
+   */
+  serviceWorker: Promise<ServiceWorkerRegistration | null>;
 }
 
 function readStoredQuality(): string | null {
@@ -62,6 +69,12 @@ export class App {
   private readonly meterFill = el("div", { class: "meter-fill" });
   private readonly meterMark = el("div", { class: "meter-mark hidden", title: "Alert level" });
   private readonly meterValue = el("span", { class: "meter-value" }, "–");
+  // Notifications: a switch for this device and a test button.
+  private readonly pushBtn = el("button", { class: "btn" }, "Turn on");
+  private readonly pushTestBtn = el("button", { class: "btn hidden" }, "Send test");
+  private readonly pushNote = el("p", { class: "muted notify-note" }, "");
+  private push: PushControl | null = null;
+  private pushStatus: PushStatus | null = null;
   private readonly eventsNote = el("p", { class: "muted events-note" }, "");
   private readonly eventList = el("ul", { class: "events" });
 
@@ -91,10 +104,14 @@ export class App {
       "section",
       { class: "sound" },
       el("div", { class: "meter-row" }, el("span", { class: "muted" }, "Sound"), meter, this.meterValue),
+      el("h2", {}, "Notifications"),
+      el("div", { class: "notify-row" }, this.pushBtn, this.pushTestBtn),
+      this.pushNote,
       el("h2", {}, "Noise events"),
       this.eventsNote,
       this.eventList,
     );
+    this.pushBtn.disabled = true;
     this.root.replaceChildren(header, this.stage, controls, this.stats, sound);
 
     this.unmuteBtn.addEventListener("click", () => {
@@ -107,10 +124,13 @@ export class App {
     this.qualityBtn.addEventListener("click", () => this.toggleQuality());
     this.fullscreenBtn.addEventListener("click", () => void this.toggleFullscreen());
     this.logoutBtn.addEventListener("click", () => this.hooks.onLogout());
+    this.pushBtn.addEventListener("click", () => void this.togglePush());
+    this.pushTestBtn.addEventListener("click", () => void this.testPush());
     this.video.addEventListener("volumechange", () => this.renderOverlay());
     document.addEventListener("visibilitychange", this.onVisibility);
 
     void this.load();
+    void this.initPush();
   }
 
   /** Stops playback, timers and listeners. The view can then be replaced. */
@@ -141,10 +161,12 @@ export class App {
         this.setPill("no cameras", "err");
         return;
       }
-      this.applyCamera(cameras[0]);
+      // A notification links to "/?camera=<id>".
+      const camera = pickCamera(cameras, location.search)!;
+      this.applyCamera(camera);
       this.pollTimer = setInterval(() => void this.refreshCamera(), CAMERA_POLL_MS);
       this.startPlayer();
-      this.startSound(cameras[0]);
+      this.startSound(camera);
     } catch (err) {
       if (this.handleAuthError(err) || this.destroyed) return;
       this.setPill(`server unreachable: ${(err as Error).message}`, "err");
@@ -303,6 +325,56 @@ export class App {
     if (this.events.length > 0) this.eventsNote.textContent = "";
     else if (this.eventsNote.dataset.disabled) this.eventsNote.textContent = "Noise detection is switched off.";
     else this.eventsNote.textContent = "No noise detected yet.";
+  }
+
+  // --- notifications -------------------------------------------------------
+
+  private async initPush(): Promise<void> {
+    try {
+      this.push = new PushControl(browserPushEnv(await this.hooks.serviceWorker), api);
+      const status = await this.push.init();
+      if (!this.destroyed) this.renderPush(status);
+    } catch (err) {
+      if (this.handleAuthError(err) || this.destroyed) return;
+      this.pushNote.textContent = `Notifications unavailable: ${(err as Error).message}`;
+    }
+  }
+
+  private renderPush(status: PushStatus, note?: string): void {
+    this.pushStatus = status;
+    const on = status.state === "on";
+    this.pushBtn.textContent = on ? "Turn off" : "Turn on";
+    this.pushBtn.disabled = status.state !== "on" && status.state !== "off";
+    this.pushBtn.classList.toggle("primary", status.state === "off");
+    this.pushTestBtn.classList.toggle("hidden", !on);
+    this.pushNote.textContent = note ?? describePush(status);
+  }
+
+  /** Runs from a tap, which browsers require before asking for permission. */
+  private async togglePush(): Promise<void> {
+    if (!this.push || !this.pushStatus) return;
+    this.pushBtn.disabled = true;
+    try {
+      const status = this.pushStatus.state === "on" ? await this.push.disable() : await this.push.enable();
+      if (!this.destroyed) this.renderPush(status);
+    } catch (err) {
+      if (this.handleAuthError(err) || this.destroyed) return;
+      this.renderPush(this.pushStatus, `Could not change notifications: ${(err as Error).message}`);
+    }
+  }
+
+  private async testPush(): Promise<void> {
+    if (!this.push || !this.pushStatus) return;
+    this.pushTestBtn.disabled = true;
+    try {
+      await this.push.test();
+      this.renderPush(this.pushStatus, "Test sent. It should arrive within a few seconds.");
+    } catch (err) {
+      if (this.handleAuthError(err) || this.destroyed) return;
+      this.renderPush(this.pushStatus, `Test failed: ${(err as Error).message}`);
+    } finally {
+      this.pushTestBtn.disabled = false;
+    }
   }
 
   private async setPaused(paused: boolean): Promise<void> {

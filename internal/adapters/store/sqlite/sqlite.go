@@ -1,4 +1,5 @@
-// Package sqlite is a ports.EventStore backed by one SQLite file.
+// Package sqlite is a ports.EventStore and ports.SubscriptionStore backed by
+// one SQLite file.
 //
 // It uses modernc.org/sqlite, a pure-Go build of SQLite: no C compiler is
 // needed and the service stays a single binary (ADR-0007).
@@ -35,14 +36,25 @@ var migrations = []string{
 		peak_dbfs  REAL NOT NULL
 	) STRICT;
 	CREATE INDEX events_by_start ON events (started_at);`,
+	// Devices that receive push notifications (ADR-0008). The endpoint URL
+	// is the identity the browser gives a subscription.
+	`CREATE TABLE push_subscriptions (
+		endpoint   TEXT PRIMARY KEY,
+		p256dh     TEXT NOT NULL,
+		auth       TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	) STRICT;`,
 }
 
-// Store implements ports.EventStore.
+// Store implements ports.EventStore and ports.SubscriptionStore.
 type Store struct {
 	db *sql.DB
 }
 
-var _ ports.EventStore = (*Store)(nil)
+var (
+	_ ports.EventStore        = (*Store)(nil)
+	_ ports.SubscriptionStore = (*Store)(nil)
+)
 
 // Open opens (creating if needed) the database file and brings its schema
 // up to date.
@@ -184,6 +196,50 @@ func (s *Store) CloseOpenEvents(ctx context.Context) (int, error) {
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
+}
+
+// SaveSubscription implements ports.SubscriptionStore.
+func (s *Store) SaveSubscription(ctx context.Context, sub domain.PushSubscription) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`,
+		sub.Endpoint, sub.P256DH, sub.Auth, sub.CreatedAt.UnixMilli())
+	if err != nil {
+		return fmt.Errorf("save subscription: %w", err)
+	}
+	return nil
+}
+
+// DeleteSubscription implements ports.SubscriptionStore.
+func (s *Store) DeleteSubscription(ctx context.Context, endpoint string) error {
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM push_subscriptions WHERE endpoint = ?", endpoint); err != nil {
+		return fmt.Errorf("delete subscription: %w", err)
+	}
+	return nil
+}
+
+// ListSubscriptions implements ports.SubscriptionStore.
+func (s *Store) ListSubscriptions(ctx context.Context) ([]domain.PushSubscription, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT endpoint, p256dh, auth, created_at FROM push_subscriptions ORDER BY created_at, endpoint")
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.PushSubscription{}
+	for rows.Next() {
+		var (
+			sub     domain.PushSubscription
+			created int64
+		)
+		if err := rows.Scan(&sub.Endpoint, &sub.P256DH, &sub.Auth, &created); err != nil {
+			return nil, fmt.Errorf("list subscriptions: %w", err)
+		}
+		sub.CreatedAt = time.UnixMilli(created).UTC()
+		out = append(out, sub)
+	}
+	return out, rows.Err()
 }
 
 // Close implements ports.EventStore.

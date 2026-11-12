@@ -10,6 +10,20 @@ const root = document.getElementById("app")!;
 let app: App | null = null;
 let bootTimer: ReturnType<typeof setTimeout> | null = null;
 
+// The service worker makes the app installable, opens it offline and shows
+// notifications. Only in production builds: during `vite dev` it would
+// cache dev-server files. Resolves once a worker is active.
+const serviceWorker: Promise<ServiceWorkerRegistration | null> =
+  import.meta.env.PROD && "serviceWorker" in navigator
+    ? navigator.serviceWorker
+        .register("/sw.js")
+        .then(() => navigator.serviceWorker.ready)
+        .catch((err: unknown) => {
+          console.warn("service worker registration failed", err);
+          return null;
+        })
+    : Promise.resolve(null);
+
 function showLogin(): void {
   app?.destroy();
   app = null;
@@ -20,6 +34,7 @@ function showApp(): void {
   app?.destroy();
   app = new App(root, {
     onUnauthorized: showLogin,
+    serviceWorker,
     onLogout: () => {
       void api
         .logout()
@@ -43,14 +58,6 @@ async function boot(): Promise<void> {
     root.replaceChildren(el("p", { class: "boot-error" }, `Server unreachable (${(err as Error).message}). Retrying…`));
     bootTimer = setTimeout(() => void boot(), 5000);
   }
-}
-
-// The service worker makes the app installable and opens it offline. Only
-// in production builds: during `vite dev` it would cache dev-server files.
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch((err: unknown) => {
-    console.warn("service worker registration failed", err);
-  });
 }
 
 void boot();

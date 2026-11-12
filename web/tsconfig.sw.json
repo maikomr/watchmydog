@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src/sw/sw.ts", "src/sw/strategy.ts"]
+  "include": ["src/sw/sw.ts", "src/sw/strategy.ts", "src/sw/notify.ts"]
 }

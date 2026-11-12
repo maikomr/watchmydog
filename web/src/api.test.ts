@@ -69,4 +69,24 @@ describe("api", () => {
     await api.pause("a b");
     expect(calls[0].url).toBe("/api/cameras/a%20b/pause");
   });
+
+  it("subscribes, tests and unsubscribes notifications with 204 answers", async () => {
+    const calls = stubFetch(204);
+    const sub = { endpoint: "https://push.example/x", keys: { p256dh: "p", auth: "a" } };
+    await expect(api.pushSubscribe(sub)).resolves.toBeUndefined();
+    await expect(api.pushTest(sub.endpoint)).resolves.toBeUndefined();
+    await expect(api.pushUnsubscribe(sub.endpoint)).resolves.toBeUndefined();
+    expect(calls.map((c) => [c.url, c.init?.method])).toEqual([
+      ["/api/push/subscribe", "POST"],
+      ["/api/push/test", "POST"],
+      ["/api/push/unsubscribe", "POST"],
+    ]);
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual(sub);
+    expect(JSON.parse(calls[1].init?.body as string)).toEqual({ endpoint: sub.endpoint });
+  });
+
+  it("passes on the server's reason when a test notification fails", async () => {
+    stubFetch(502, { error: "webpush: push service answered 403 Forbidden" });
+    await expect(api.pushTest("https://push.example/x")).rejects.toMatchObject({ status: 502, message: /403/ });
+  });
 });

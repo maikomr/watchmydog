@@ -30,8 +30,9 @@ Commit per increment (or per meaningful step inside one) with a message of the f
 - `internal/ports` – interfaces the domain needs from the outside world
   (StreamEngine, SoundDetector, Notifier, Recorder, EventStore, Authenticator, CameraControl).
 - `internal/adapters/<port>/<impl>` – one package per concrete implementation.
-- `internal/app/<service>` – application services that connect ports (e.g. `monitor`: detector →
-  events → store and live subscribers). No I/O of their own; tested with fakes.
+- `internal/app/<service>` – application services that connect ports (`monitor`: detector →
+  events → store and live subscribers; `alerts`: event → rules → notifier for every subscribed
+  device). No I/O of their own; tested with fakes.
 - `internal/httpapi` – HTTP handlers; translate requests into port and service calls, no business rules.
 - `cmd/watchmydog` – wiring and process lifecycle only.
 
@@ -55,3 +56,5 @@ spot later.
 | 6 | 2026-11-11 | reboot test fail, fixed | Phone app installed. After reboot the service came up by itself (healthy), but Tailscale was Stopped because its app is not set to launch at login; opening the app restored HTTPS. Owner to enable "Launch Tailscale at login" and repeat the reboot test |
 | 6 | 2026-11-12 | pass | Owner confirmed after enabling "Launch Tailscale at login": reboot test and idle test pass. Decision: FileVault stays on (disk encryption over unattended recovery); after an unplanned reboot someone has to log in at the Mac |
 | 7 | 2026-11-12 | automated part pass | `make check` green (Go incl. store contract tests on SQLite and memory, 37 web tests). On the Mac under launchd: detector listening 1.5 s after start with the camera off (no capture process; before the source reorder go2rtc started the camera for ~1 s per connect); quiet room -50 dBFS; `/api/events` and `/api/events/stream` 401 without session, levels arrive 10/s with timestamps within ~10 ms of the clock; video + audio still play on `dog` and `dog_low`. With the threshold temporarily at -45 an event was stored, streamed live, and closed and saved on shutdown; the service stops in under 1 s with a stream open. Pause: one warning, no detection; listening again 1.5 s after resume. Test data removed, threshold back to -30. Not verified: a real trigger at -30 (the Mac's speaker only reached -42 dBFS at the mic and the room was not quiet, so the detection delay could not be measured), and the meter bar moving on a real screen (a headless screenshot showed the layout, threshold mark and event list). Pending: owner's phone check |
+| 7 | 2026-11-12 | pass | Owner confirmed the phone check |
+| 8 | 2026-11-12 | automated part pass | `make check` green (69 web tests; Go tests include decrypting a sent message as a browser would and verifying its VAPID signature). On the Mac under launchd: `data/vapid.json` created with mode 0600; database migrated to schema 2; `/api/push/*` return 401 without a session; subscribe stores the device, a second subscribe keeps one row; a test send to a made-up FCM endpoint reached Google, was answered "gone" and the device was forgotten (API 410); real noise events in the room were logged with the reason for not notifying (no device switched on); a headless screenshot shows the Notifications section with "Turn on". Not verified: delivery to a real device, the permission prompt, the notification's look and what a tap does (headless Chrome has no push). Pending: owner's phone check |

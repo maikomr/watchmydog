@@ -65,6 +65,35 @@ Facts worth knowing:
   Deleting the file while the service is stopped clears the history.
 - It reacts to loudness, not to what the sound is: a vacuum cleaner counts too.
 
+## Notifications
+
+Background: [ADR-0008](adr/0008-push-notifications.md).
+
+Each device decides for itself: in the app, under "Notifications", tap **Turn on** and allow
+notifications when Chrome asks. **Send test** sends one to that device only. **Turn off** stops
+them for that device.
+
+A notification is sent when a noise event starts. Rules are in the `push:` section of
+`deploy/watchmydog.local.yaml`; apply with `make restart-agent`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `cooldown` | 5m | At most one notification per camera in this time. `0s` notifies about every event |
+| `quiet_hours` | none | `start`/`end` as `"23:00"`/`"07:00"`, on this Mac's clock. No notifications in between; events are still listed in the app |
+| `enabled` | true | `false` switches notifications off for all devices |
+| `contact` | placeholder | Email or https URL passed to the push service with each notification |
+
+Facts worth knowing:
+
+- Notifications travel over the internet through Google's push service (for Chrome), encrypted so
+  Google cannot read them. They arrive without Tailscale; opening the app from one needs Tailscale.
+- `data/vapid.json` is the key pair that signs them. Keep it with the rest of `data/`. If it is
+  lost, every device has to tap Turn on again.
+- A phone that is offline for more than an hour does not get that notification later.
+- Subscribed devices: `sqlite3 data/watchmydog.db "select substr(endpoint,1,40), datetime(created_at/1000,'unixepoch','localtime') from push_subscriptions"`.
+- `make logs` shows a line for every event: `notification sent`, or `no notification` with the
+  reason (cooldown, quiet hours, no device).
+
 ## Reboots, power cuts and FileVault
 
 This Mac has **FileVault on**. macOS then does not allow automatic login, and after any reboot the
@@ -94,6 +123,9 @@ as". The service works either way.
 | Sound meter shows "–" | No audio is reaching the detector: camera released, or `make logs` shows `audio unavailable` |
 | No noise events although it was loud | Threshold too high for the room: see "Noise detection: tuning" |
 | Too many noise events | Threshold too low or `min_duration` too short: same section |
+| No notification although the event is in the list | `make logs`: `no notification` gives the reason (cooldown, quiet hours, no device). If it says `notification sent`: on the phone check Do Not Disturb, Settings > Apps > watchmydog (or Chrome) > Notifications, and that battery use is not "Restricted" |
+| "Send test" says the subscription has expired | Tap Turn off, then Turn on |
+| App says notifications are blocked | Chrome > site settings for the app's address > Notifications > Allow, then reopen the app |
 | Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size

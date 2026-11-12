@@ -2,7 +2,7 @@
 // between the ports: it runs a ports.SoundDetector per camera, turns what
 // the detector hears into domain.Events, saves them in a ports.EventStore
 // and fans levels and events out to live subscribers (the HTTP layer's
-// server-sent-events stream; push notifications in a later increment).
+// server-sent-events stream). Other services hook in with OnEventStart.
 //
 // It does no I/O of its own, so it is tested with a fake detector and the
 // in-memory store.
@@ -46,6 +46,8 @@ type Service struct {
 	info   Info
 	logger *slog.Logger
 	newID  func() domain.EventID
+	// onStart is set before Run and read-only afterwards.
+	onStart []func(domain.Event)
 
 	mu   sync.Mutex
 	open map[domain.CameraID]domain.Event
@@ -65,6 +67,11 @@ func New(store ports.EventStore, info Info, logger *slog.Logger) *Service {
 		subs:   map[chan Message]struct{}{},
 	}
 }
+
+// OnEventStart registers fn to be called for every event that starts (the
+// notification service hooks in here). Register before Run. fn is called
+// on the detector's goroutine and must return quickly.
+func (s *Service) OnEventStart(fn func(domain.Event)) { s.onStart = append(s.onStart, fn) }
 
 // Run watches every camera that has audio and blocks until ctx is done and
 // all detectors have stopped.
@@ -156,6 +163,9 @@ func (s *Service) SoundStarted(d domain.SoundDetection) {
 	s.mu.Unlock()
 
 	s.logger.Info("sound event started", "camera", e.CameraID, "event", e.ID, "level_dbfs", round1(e.PeakDBFS))
+	for _, fn := range s.onStart {
+		fn(e)
+	}
 	s.save(e)
 }
 

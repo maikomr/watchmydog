@@ -27,6 +27,12 @@ func TestContract(t *testing.T) {
 	})
 }
 
+func TestSubscriptionContract(t *testing.T) {
+	storetest.RunSubscriptions(t, func(t *testing.T) ports.SubscriptionStore {
+		return open(t, filepath.Join(t.TempDir(), "test.db"))
+	})
+}
+
 func TestEventsSurviveReopenAndMigrationsRunOnce(t *testing.T) {
 	ctx := context.Background()
 	// A directory with a space and a "?" checks the path is escaped in the DSN.

@@ -20,12 +20,15 @@ import (
 
 	"github.com/maikomr/watchmydog/internal/adapters/auth/sharedsecret"
 	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
+	"github.com/maikomr/watchmydog/internal/adapters/notify/webpush"
 	"github.com/maikomr/watchmydog/internal/adapters/power"
 	"github.com/maikomr/watchmydog/internal/adapters/sound/threshold"
 	"github.com/maikomr/watchmydog/internal/adapters/store/sqlite"
+	"github.com/maikomr/watchmydog/internal/app/alerts"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
+	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/httpapi"
 	"github.com/maikomr/watchmydog/internal/ports"
 )
@@ -123,6 +126,15 @@ func run() error {
 		ThresholdDBFS: rules.ThresholdDBFS,
 		ReleaseDBFS:   rules.ReleaseDBFS(),
 	}, logger.With("component", "monitor"))
+
+	// Notifications (ADR-0008). Hooked into the monitor before it runs.
+	notify, err := newAlerts(cfg, store, cameras, logger)
+	if err != nil {
+		return err
+	}
+	mon.OnEventStart(notify.EventStarted)
+	go notify.Run(ctx)
+
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
@@ -157,6 +169,7 @@ func run() error {
 			Cameras: cameras,
 			Engine:  engine,
 			Monitor: mon,
+			Alerts:  notify,
 			WebDir:  cfg.WebDir,
 			Auth:    auth,
 		}),
@@ -184,6 +197,43 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// newAlerts builds the notification service. With push.enabled: false it
+// still exists (the API then reports "disabled") but sends nothing.
+func newAlerts(cfg config.Config, store ports.SubscriptionStore, cameras []domain.Camera, logger *slog.Logger) (*alerts.Service, error) {
+	log := logger.With("component", "alerts")
+	if !cfg.Push.Enabled {
+		logger.Info("notifications disabled (push.enabled: false)")
+		return alerts.New(store, nil, cameras, alerts.Settings{}, log), nil
+	}
+	keys, created, err := webpush.LoadOrCreateKeys(cfg.VAPIDKeysPath())
+	if err != nil {
+		return nil, fmt.Errorf("notifications: %w", err)
+	}
+	if created {
+		logger.Info("created the key pair that signs notifications", "file", cfg.VAPIDKeysPath())
+	}
+	warnIfReadableByOthers(logger, cfg.VAPIDKeysPath())
+	notifier, err := webpush.New(webpush.Settings{Keys: keys, Contact: cfg.Push.Contact})
+	if err != nil {
+		return nil, fmt.Errorf("notifications: %w", err)
+	}
+	quiet, err := cfg.Push.QuietHours.Window()
+	if err != nil {
+		return nil, fmt.Errorf("push.quiet_hours: %w", err)
+	}
+	quietLog := "none"
+	if quiet != nil {
+		quietLog = quiet.String()
+	}
+	logger.Info("notifications on", "cooldown", cfg.Push.Cooldown, "quiet_hours", quietLog)
+	return alerts.New(store, notifier, cameras, alerts.Settings{
+		Enabled:   true,
+		PublicKey: notifier.PublicKey(),
+		Cooldown:  cfg.Push.Cooldown,
+		Quiet:     quiet,
+	}, log), nil
 }
 
 // genSecret implements `watchmydog gen-secret <file>`: it creates a random

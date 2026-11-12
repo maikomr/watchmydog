@@ -53,6 +53,24 @@ export interface SoundEvent {
   peakDbfs: number;
 }
 
+/** How this server sends notifications (see docs/adr/0008). */
+export interface PushConfig {
+  /** False when notifications are switched off in the server's config. */
+  enabled: boolean;
+  /** Key the browser subscribes with (VAPID public key, base64url). */
+  publicKey: string;
+  /** Minimum time between two notifications for the same camera. */
+  cooldownSeconds: number;
+  /** Daily span without notifications, on the Mac's clock ("HH:MM"). */
+  quietHours: { start: string; end: string } | null;
+}
+
+/** What PushSubscription.toJSON() returns in the browser. */
+export interface PushSubscriptionData {
+  endpoint?: string;
+  keys?: Record<string, string>;
+}
+
 /** An HTTP error from the API, with the server's message when it sent one. */
 export class ApiError extends Error {
   constructor(
@@ -91,12 +109,16 @@ async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return (await (await request(url, init)).json()) as T;
 }
 
-function postJSON<T>(url: string, body?: unknown): Promise<T> {
-  return getJSON<T>(url, {
+function jsonPost(body?: unknown): RequestInit {
+  return {
     method: "POST",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  };
+}
+
+function postJSON<T>(url: string, body?: unknown): Promise<T> {
+  return getJSON<T>(url, jsonPost(body));
 }
 
 export const api = {
@@ -110,6 +132,17 @@ export const api = {
   camera: (id: string) => getJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}`),
   pause: (id: string) => postJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}/pause`),
   resume: (id: string) => postJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}/resume`),
+  pushConfig: () => getJSON<PushConfig>("/api/push/config"),
+  pushSubscribe: async (sub: PushSubscriptionData) => {
+    await request("/api/push/subscribe", jsonPost(sub));
+  },
+  pushUnsubscribe: async (endpoint: string) => {
+    await request("/api/push/unsubscribe", jsonPost({ endpoint }));
+  },
+  /** Asks the server for a test notification to this device. */
+  pushTest: async (endpoint: string) => {
+    await request("/api/push/test", jsonPost({ endpoint }));
+  },
   /** Newest first. */
   events: async (cameraId: string, limit: number) =>
     (await getJSON<{ events: SoundEvent[] }>(`/api/events?camera=${encodeURIComponent(cameraId)}&limit=${limit}`)).events,

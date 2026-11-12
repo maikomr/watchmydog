@@ -307,3 +307,55 @@ func TestSoundValidation(t *testing.T) {
 		t.Errorf("disabled sound section must not be validated: %v", err)
 	}
 }
+
+func TestPushDefaultsAndOverrides(t *testing.T) {
+	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, envSecret, sampleFiles())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Push{Enabled: true, Cooldown: 5 * time.Minute, Contact: "watchmydog@example.invalid"}
+	if cfg.Push != want {
+		t.Errorf("defaults = %+v, want %+v", cfg.Push, want)
+	}
+	if w, err := cfg.Push.QuietHours.Window(); w != nil || err != nil {
+		t.Errorf("default quiet hours = %v, %v; want none", w, err)
+	}
+	if cfg.VAPIDKeysPath() != "/etc/wmd/data/vapid.json" {
+		t.Errorf("VAPIDKeysPath = %q", cfg.VAPIDKeysPath())
+	}
+
+	yaml := sampleYAML + "push:\n  cooldown: 0s\n  quiet_hours:\n    start: \"23:00\"\n    end: \"07:30\"\n  contact: https://example.com/me\n"
+	cfg, err = Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Push.Enabled || cfg.Push.Cooldown != 0 || cfg.Push.Contact != "https://example.com/me" {
+		t.Errorf("overrides = %+v", cfg.Push)
+	}
+	w, err := cfg.Push.QuietHours.Window()
+	if err != nil || w == nil || w.StartMin != 23*60 || w.EndMin != 7*60+30 {
+		t.Errorf("quiet hours = %+v, %v", w, err)
+	}
+}
+
+func TestPushValidation(t *testing.T) {
+	bad := map[string]string{
+		"cooldown: -1s":                                  "cooldown",
+		"cooldown: 48h":                                  "cooldown",
+		"contact: nobody":                                "contact",
+		"contact: http://example.com":                    "contact",
+		"quiet_hours: {start: \"23:00\"}":                "quiet_hours",
+		"quiet_hours: {start: \"11pm\", end: \"07:00\"}": "quiet_hours",
+	}
+	for line, wantErr := range bad {
+		yaml := sampleYAML + "push:\n  " + line + "\n"
+		_, err := Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml}))
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%q: err = %v, want mention of %s", line, err, wantErr)
+		}
+	}
+	yaml := sampleYAML + "push:\n  enabled: false\n  contact: nobody\n"
+	if _, err := Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml})); err != nil {
+		t.Errorf("disabled push section must not be validated: %v", err)
+	}
+}

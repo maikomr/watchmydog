@@ -1,8 +1,8 @@
 # watchmydog
 
 Watch your dog from your phone while you are away. A Go service on a Mac mini streams the USB webcam's
-video **and audio** over WebRTC to an Android phone through a Tailscale VPN. Later increments add
-howl detection with push alerts, recording, two-way talk and camera controls.
+video **and audio** over WebRTC to an Android phone through a Tailscale VPN. It detects noise (howling)
+and notifies the phone. Later increments add recording, two-way talk and camera controls.
 
 - Plan and increments: [docs/PLAN.md](docs/PLAN.md)
 - Architecture decisions: [docs/adr/](docs/adr/)
@@ -20,8 +20,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
 | 5 | Auth + HTTPS (shared secret, tailscale serve) | done |
 | 6 | PWA + run at boot + keep the Mac awake | done |
-| 7 | Noise detection: live level meter, event history (ADR-0007) | built, awaiting manual check |
-| 8 | Push notifications | |
+| 7 | Noise detection: live level meter, event history (ADR-0007) | done |
+| 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | built, awaiting manual check |
 | 9 | Recording and clips | |
 | 10 | Two-way audio | |
 | 11 | Camera PTZ controls | |

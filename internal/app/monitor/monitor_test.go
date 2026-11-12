@@ -151,3 +151,21 @@ func TestRunWatchesOnlyCamerasWithAudio(t *testing.T) {
 		t.Fatal("Run must return when ctx is done")
 	}
 }
+
+func TestOnEventStartIsCalledOncePerEventWithTheStoredEvent(t *testing.T) {
+	store := memory.New()
+	s := newService(store)
+	var got []domain.Event
+	s.OnEventStart(func(e domain.Event) { got = append(got, e) })
+
+	s.SoundStarted(domain.SoundDetection{CameraID: "dog", StartedAt: t0, PeakDBFS: -20})
+	s.SoundEnded(domain.SoundDetection{CameraID: "dog", StartedAt: t0, EndedAt: t0.Add(3 * time.Second), PeakDBFS: -10})
+
+	if len(got) != 1 {
+		t.Fatalf("hook called %d times, want 1 (start only)", len(got))
+	}
+	stored, _ := store.ListEvents(context.Background(), ports.EventQuery{})
+	if len(stored) != 1 || stored[0].ID != got[0].ID || got[0].CameraID != "dog" || !got[0].Ongoing() {
+		t.Errorf("hook got %+v, stored %+v", got[0], stored)
+	}
+}

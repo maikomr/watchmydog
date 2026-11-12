@@ -42,6 +42,18 @@ sound:
   min_duration: 1s      # loud time needed before an event starts
   quiet_time: 5s        # quiet time that ends an event
 
+# Notifications to phones (ADR-0008, guide in docs/OPERATIONS.md). Each device
+# switches them on in the app. Restart the service after changing these.
+push:
+  enabled: true
+  cooldown: 5m          # at most one notification per camera in this time; 0 = every event
+  # quiet_hours:        # no notifications between these times (this Mac's clock);
+  #   start: "23:00"    # noise is still detected and listed in the app
+  #   end: "07:00"
+  # contact: you@example.com   # email or https URL passed to the phone vendor's push
+  #                            # service (Google for Android) with every notification.
+  #                            # Optional: the default is a placeholder address.
+
 cameras:
   - id: dog
     name: Living room
