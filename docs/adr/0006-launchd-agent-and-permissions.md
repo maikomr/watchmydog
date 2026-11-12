@@ -58,3 +58,9 @@ microphone permission without anyone at the Mac. Findings on this Mac mini (macO
   recovery; it is the owner's decision and documented in docs/OPERATIONS.md.
 - A Linux edge node would use a systemd unit and `systemd-inhibit`; the `power` package already has
   a no-op for other platforms and nothing else depends on launchd.
+
+## Amendment 2026-11-12: FileVault stays on
+
+The owner decided to keep FileVault on. Unattended recovery after an unplanned reboot is therefore
+not available by design; `sudo fdesetup authrestart` covers planned restarts. Increment 6's reboot
+and idle checks passed once Tailscale was set to launch at login.

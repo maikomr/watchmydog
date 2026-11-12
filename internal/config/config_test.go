@@ -260,3 +260,50 @@ func TestKeepAwakeCanBeDisabled(t *testing.T) {
 		t.Error("keep_awake: false must be honoured")
 	}
 }
+
+func TestSoundDefaultsAndOverrides(t *testing.T) {
+	cfg, err := Load([]string{"-config", "/etc/wmd/watchmydog.yaml"}, envSecret, sampleFiles())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Sound{Enabled: true, ThresholdDBFS: -30, HysteresisDB: 6, MinDuration: time.Second, QuietTime: 5 * time.Second}
+	if cfg.Sound != want {
+		t.Errorf("defaults = %+v, want %+v", cfg.Sound, want)
+	}
+	if cfg.DBPath() != "/etc/wmd/data/watchmydog.db" {
+		t.Errorf("DBPath = %q", cfg.DBPath())
+	}
+
+	// A partial section overrides only what it names.
+	yaml := sampleYAML + "sound:\n  threshold_dbfs: -42.5\n  min_duration: 300ms\n"
+	cfg, err = Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml, "/secret": testSecret}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.ThresholdDBFS, want.MinDuration = -42.5, 300*time.Millisecond
+	if cfg.Sound != want {
+		t.Errorf("overrides = %+v, want %+v", cfg.Sound, want)
+	}
+}
+
+func TestSoundValidation(t *testing.T) {
+	bad := map[string]string{
+		"threshold_dbfs: 3":    "threshold_dbfs",
+		"threshold_dbfs: -120": "threshold_dbfs",
+		"hysteresis_db: -1":    "hysteresis_db",
+		"min_duration: 10ms":   "min_duration",
+		"quiet_time: 1h":       "quiet_time",
+	}
+	for line, wantErr := range bad {
+		yaml := sampleYAML + "sound:\n  " + line + "\n"
+		_, err := Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml}))
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%q: err = %v, want mention of %s", line, err, wantErr)
+		}
+	}
+	// Switched off, the values are not checked.
+	yaml := sampleYAML + "sound:\n  enabled: false\n  threshold_dbfs: 3\n"
+	if _, err := Load([]string{"-config", "/c.yaml"}, envSecret, files(map[string]string{"/c.yaml": yaml})); err != nil {
+		t.Errorf("disabled sound section must not be validated: %v", err)
+	}
+}

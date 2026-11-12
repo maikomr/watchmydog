@@ -40,6 +40,19 @@ export interface Camera {
   streams: StreamVariant[];
 }
 
+/** Something the microphone picked up (see docs/adr/0007). */
+export interface SoundEvent {
+  id: string;
+  cameraId: string;
+  kind: "sound";
+  /** ISO 8601, UTC. */
+  startedAt: string;
+  /** null while the event is going on. */
+  endedAt: string | null;
+  /** Loudest 100 ms of the event in dBFS (0 = microphone's maximum). */
+  peakDbfs: number;
+}
+
 /** An HTTP error from the API, with the server's message when it sent one. */
 export class ApiError extends Error {
   constructor(
@@ -97,4 +110,7 @@ export const api = {
   camera: (id: string) => getJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}`),
   pause: (id: string) => postJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}/pause`),
   resume: (id: string) => postJSON<Camera>(`/api/cameras/${encodeURIComponent(id)}/resume`),
+  /** Newest first. */
+  events: async (cameraId: string, limit: number) =>
+    (await getJSON<{ events: SoundEvent[] }>(`/api/events?camera=${encodeURIComponent(cameraId)}&limit=${limit}`)).events,
 };

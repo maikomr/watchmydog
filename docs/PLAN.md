@@ -135,6 +135,13 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** reboot the Mac, touch nothing, open the home-screen icon on the phone → live stream within ~1 min. Leave the Mac idle for over an hour with no Claude Code session running, then check from outside: still reachable, and `pmset -g log` shows no idle sleep.
 
 ### 7. Howl / noise detection
+
+> Outcome note (2026-11-12): built as planned, with three differences. The detector is an
+> audio-only viewer and the go2rtc config lists audio before video, so the camera stays off while
+> nobody watches. There is no detector cooldown: `quiet_time` merges bursts into one event, and
+> limiting notifications is increment 8's job. An application-service layer (`internal/app/monitor`)
+> sits between detector, store and HTTP. The default threshold (-30 dBFS) needs tuning in the room:
+> quiet reads about -50 dBFS, and the Mac's own speaker was too weak to trigger it. See ADR-0007.
 - `SoundDetector` port; `threshold` adapter: ffmpeg pulls `rtsp://127.0.0.1:8554/dog` audio only → s16le PCM pipe → Go computes RMS dBFS per 100 ms window; "event" when level > threshold for ≥ N s, with hysteresis and cooldown. All tunables in config.
 - `EventStore` port + SQLite adapter; `/api/events` (list, filter by time), `/api/events/stream` (SSE for live level meter and events).
 - Client: live level meter + event list.

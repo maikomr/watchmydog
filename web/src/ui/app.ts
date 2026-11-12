@@ -1,12 +1,16 @@
 // Live view UI: one camera, one <video>, status pill, controls. Pure DOM,
 // no framework; the player logic lives in ../player and is tested on its own.
 
-import { api, isUnauthorized, type Camera, type StreamVariant } from "../api";
+import { api, isUnauthorized, type Camera, type SoundEvent, type StreamVariant } from "../api";
 import { LivePlayer, type PlayerState, type PlayerStats } from "../player/player";
+import { describeEvent, formatWhen, levelFraction, mergeEvent } from "../sound/format";
+import { SoundStream, type SoundHello, type SoundLevel } from "../sound/stream";
 import { el } from "./dom";
 
 const QUALITY_KEY = "wmd.quality";
 const CAMERA_POLL_MS = 10_000;
+/** How many events the list shows. */
+const EVENT_LIST_MAX = 20;
 
 export interface AppHooks {
   /** The session is missing or expired: show the login screen. */
@@ -38,6 +42,8 @@ export class App {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  private sound: SoundStream | null = null;
+  private events: SoundEvent[] = [];
 
   private readonly video = el("video", { playsinline: "", autoplay: "", muted: "" });
   private readonly title = el("h1", {}, "watchmydog");
@@ -52,9 +58,21 @@ export class App {
   private readonly logoutBtn = el("button", { class: "btn" }, "Log out");
   private readonly stats = el("div", { class: "stats" }, "");
   private readonly stage = el("div", { class: "stage" });
+  // Sound section: level meter with a threshold mark, then the event list.
+  private readonly meterFill = el("div", { class: "meter-fill" });
+  private readonly meterMark = el("div", { class: "meter-mark hidden", title: "Alert level" });
+  private readonly meterValue = el("span", { class: "meter-value" }, "–");
+  private readonly eventsNote = el("p", { class: "muted events-note" }, "");
+  private readonly eventList = el("ul", { class: "events" });
 
   private readonly onVisibility = () => {
-    if (document.visibilityState === "visible") this.player?.reconnectNow();
+    if (document.visibilityState === "visible") {
+      this.player?.reconnectNow();
+      this.sound?.start();
+    } else {
+      // No point in ten readings a second for a screen nobody sees.
+      this.sound?.stop();
+    }
   };
 
   constructor(
@@ -68,7 +86,16 @@ export class App {
     this.stage.append(this.video, this.overlay);
     const header = el("header", {}, this.title, this.pill);
     const controls = el("div", { class: "controls" }, this.qualityBtn, this.fullscreenBtn, this.pauseBtn, this.logoutBtn);
-    this.root.replaceChildren(header, this.stage, controls, this.stats);
+    const meter = el("div", { class: "meter" }, this.meterFill, this.meterMark);
+    const sound = el(
+      "section",
+      { class: "sound" },
+      el("div", { class: "meter-row" }, el("span", { class: "muted" }, "Sound"), meter, this.meterValue),
+      el("h2", {}, "Noise events"),
+      this.eventsNote,
+      this.eventList,
+    );
+    this.root.replaceChildren(header, this.stage, controls, this.stats, sound);
 
     this.unmuteBtn.addEventListener("click", () => {
       this.video.muted = false;
@@ -91,6 +118,8 @@ export class App {
     this.destroyed = true;
     this.player?.stop();
     this.player = null;
+    this.sound?.stop();
+    this.sound = null;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.pollTimer = this.retryTimer = null;
@@ -115,6 +144,7 @@ export class App {
       this.applyCamera(cameras[0]);
       this.pollTimer = setInterval(() => void this.refreshCamera(), CAMERA_POLL_MS);
       this.startPlayer();
+      this.startSound(cameras[0]);
     } catch (err) {
       if (this.handleAuthError(err) || this.destroyed) return;
       this.setPill(`server unreachable: ${(err as Error).message}`, "err");
@@ -202,6 +232,77 @@ export class App {
     else if (state === "reconnecting") text = "Reconnecting…";
     this.overlayText.textContent = text;
     this.overlay.classList.toggle("hidden", !text && !needsUnmute);
+  }
+
+  // --- sound ---------------------------------------------------------------
+
+  private startSound(c: Camera): void {
+    if (!c.hasAudio) {
+      this.eventsNote.textContent = "This camera has no microphone.";
+      return;
+    }
+    this.sound = new SoundStream({
+      cameraId: c.id,
+      onHello: (h) => this.onSoundHello(h),
+      onLevel: (l) => this.renderLevel(l),
+      onEvent: (ev) => {
+        this.events = mergeEvent(this.events, ev, EVENT_LIST_MAX);
+        this.renderEvents();
+      },
+    });
+    this.renderEvents();
+    if (document.visibilityState === "visible") this.sound.start();
+  }
+
+  /** Runs on every (re)connect of the stream. */
+  private onSoundHello(h: SoundHello): void {
+    this.meterMark.classList.toggle("hidden", !h.enabled);
+    this.meterMark.style.left = `${levelFraction(h.thresholdDbfs) * 100}%`;
+    this.eventsNote.dataset.disabled = h.enabled ? "" : "1";
+    // Reload the list: events may have happened while we were not connected.
+    void this.loadEvents(h.ongoing);
+  }
+
+  private async loadEvents(ongoing: SoundEvent[]): Promise<void> {
+    if (!this.camera) return;
+    try {
+      let list = await api.events(this.camera.id, EVENT_LIST_MAX);
+      if (this.destroyed) return;
+      for (const ev of ongoing) list = mergeEvent(list, ev, EVENT_LIST_MAX);
+      this.events = list;
+      this.renderEvents();
+    } catch (err) {
+      if (!this.handleAuthError(err)) this.eventsNote.textContent = `Could not load events: ${(err as Error).message}`;
+    }
+  }
+
+  private renderLevel(l: SoundLevel | null): void {
+    if (!l) {
+      this.meterFill.style.transform = "scaleX(0)";
+      this.meterFill.className = "meter-fill";
+      this.meterValue.textContent = "–";
+      return;
+    }
+    this.meterFill.style.transform = `scaleX(${levelFraction(l.dbfs).toFixed(3)})`;
+    this.meterFill.className = l.loud ? "meter-fill loud" : "meter-fill";
+    this.meterValue.textContent = `${l.dbfs.toFixed(0)} dB`;
+  }
+
+  private renderEvents(): void {
+    const now = new Date();
+    this.eventList.replaceChildren(
+      ...this.events.map((ev) =>
+        el(
+          "li",
+          ev.endedAt === null ? { class: "ongoing" } : {},
+          el("span", { class: "when" }, formatWhen(new Date(ev.startedAt), now)),
+          el("span", { class: "what" }, describeEvent(ev)),
+        ),
+      ),
+    );
+    if (this.events.length > 0) this.eventsNote.textContent = "";
+    else if (this.eventsNote.dataset.disabled) this.eventsNote.textContent = "Noise detection is switched off.";
+    else this.eventsNote.textContent = "No noise detected yet.";
   }
 
   private async setPaused(paused: boolean): Promise<void> {

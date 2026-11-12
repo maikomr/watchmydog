@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maikomr/watchmydog/internal/adapters/store/memory"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
 )
@@ -59,6 +60,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 		Now:              clock.now,
 		Cameras:          []domain.Camera{dog()},
 		Engine:           eng,
+		Monitor:          newMonitor(memory.New()),
 		WebDir:           dir,
 		Auth:             fakeAuth{now: clock.now},
 		LoginMaxFailures: 3,
@@ -96,6 +98,8 @@ func TestProtectedRoutesRequireSession(t *testing.T) {
 		{http.MethodGet, "/api/cameras/dog"},
 		{http.MethodPost, "/api/cameras/dog/pause"},
 		{http.MethodPost, "/api/cameras/dog/resume"},
+		{http.MethodGet, "/api/events"},
+		{http.MethodGet, "/api/events/stream"},
 		{http.MethodGet, "/media/api/webrtc?src=dog"},
 		{http.MethodPost, "/media/api/webrtc?src=dog"},
 	} {

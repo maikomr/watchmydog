@@ -47,10 +47,16 @@ func RenderConfig(s Settings, cameras []domain.Camera) ([]byte, error) {
 	}
 	var streams []stream
 	for _, c := range sorted {
-		st := stream{Name: string(c.ID), Sources: []string{videoSource(s, c)}}
+		// Audio first: go2rtc starts a stream's sources in order until a
+		// viewer has every track it asked for. The sound detector asks for
+		// audio only, so with this order it gets the microphone without the
+		// camera being switched on (ADR-0007). With video first, go2rtc
+		// started the camera for a second on every detector connect.
+		st := stream{Name: string(c.ID)}
 		if c.HasAudio() {
 			st.Sources = append(st.Sources, audioSource(c))
 		}
+		st.Sources = append(st.Sources, videoSource(s, c))
 		streams = append(streams, st)
 		if c.Video.Low != nil {
 			streams = append(streams, stream{Name: c.LowStreamName(), Sources: []string{lowSource(s, c)}})

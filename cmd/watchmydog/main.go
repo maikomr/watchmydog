@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +21,9 @@ import (
 	"github.com/maikomr/watchmydog/internal/adapters/auth/sharedsecret"
 	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
 	"github.com/maikomr/watchmydog/internal/adapters/power"
+	"github.com/maikomr/watchmydog/internal/adapters/sound/threshold"
+	"github.com/maikomr/watchmydog/internal/adapters/store/sqlite"
+	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
 	"github.com/maikomr/watchmydog/internal/httpapi"
@@ -98,6 +102,52 @@ func run() error {
 	}()
 	logger.Info("media engine ready", "cameras", len(cameras))
 
+	// Event history and sound monitoring (ADR-0007).
+	store, err := sqlite.Open(ctx, cfg.DBPath())
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	if n, err := store.CloseOpenEvents(ctx); err != nil {
+		logger.Error("could not close events left open by the last run", "err", err)
+	} else if n > 0 {
+		logger.Warn("closed events left open by the last run", "count", n)
+	}
+	rules := threshold.Rules{
+		ThresholdDBFS: cfg.Sound.ThresholdDBFS,
+		HysteresisDB:  cfg.Sound.HysteresisDB,
+		MinDuration:   cfg.Sound.MinDuration,
+		QuietTime:     cfg.Sound.QuietTime,
+	}
+	mon := monitor.New(store, monitor.Info{
+		Enabled:       cfg.Sound.Enabled,
+		ThresholdDBFS: rules.ThresholdDBFS,
+		ReleaseDBFS:   rules.ReleaseDBFS(),
+	}, logger.With("component", "monitor"))
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		if !cfg.Sound.Enabled {
+			logger.Info("sound detection disabled (sound.enabled: false)")
+			return
+		}
+		logger.Info("sound detection on", "threshold_dbfs", rules.ThresholdDBFS, "release_dbfs", rules.ReleaseDBFS(),
+			"min_duration", rules.MinDuration, "quiet_time", rules.QuietTime)
+		detector := threshold.New(threshold.Settings{
+			FFmpegBin: cfg.Engine.FFmpegBin,
+			RTSPAddr:  cfg.Engine.RTSPAddr,
+		}, rules, logger.With("component", "sound"))
+		mon.Run(ctx, detector, cameras)
+	}()
+	// Runs before the engine is stopped (defers are last-in, first-out):
+	// stop listening, let an open event be saved, then close the database.
+	defer func() {
+		stop()
+		<-monitorDone
+		if err := store.Close(); err != nil {
+			logger.Error("close event store", "err", err)
+		}
+	}()
+
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: httpapi.NewHandler(httpapi.Deps{
@@ -106,10 +156,14 @@ func run() error {
 			Logger:  logger,
 			Cameras: cameras,
 			Engine:  engine,
+			Monitor: mon,
 			WebDir:  cfg.WebDir,
 			Auth:    auth,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Requests inherit the shutdown signal, so long-lived responses
+		// (the live event stream) end at once instead of holding up exit.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	errCh := make(chan error, 1)

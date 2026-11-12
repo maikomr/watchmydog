@@ -32,6 +32,16 @@ go2rtc:
   capture_bin: wmd-capture    # built by `make install-capture`
   log_level: info
 
+# Noise detection (ADR-0007, tuning guide in docs/OPERATIONS.md). Levels are
+# in dBFS: 0 is the microphone's maximum, a quiet room is about -50. The app's
+# meter shows the live value. Restart the service after changing these.
+sound:
+  enabled: true
+  threshold_dbfs: -30   # at or above this, the sound is "loud"
+  hysteresis_db: 6      # "quiet" again only below threshold minus this (-36)
+  min_duration: 1s      # loud time needed before an event starts
+  quiet_time: 5s        # quiet time that ends an event
+
 cameras:
   - id: dog
     name: Living room

@@ -113,6 +113,54 @@ video {
 
 .muted { color: var(--muted); }
 
+/* Sound: level meter and event list */
+.sound { padding: 0 16px 24px; }
+.sound h2 { font-size: 0.95rem; font-weight: 600; margin: 20px 0 8px; }
+.meter-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; }
+.meter {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+  background: #222;
+  overflow: hidden;
+}
+.meter-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--ok);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 100ms linear;
+}
+.meter-fill.loud { background: var(--err); }
+.meter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--warn);
+}
+.meter-value {
+  min-width: 4.5em;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.events-note { margin: 0; font-size: 0.9rem; }
+.events { list-style: none; margin: 0; padding: 0; }
+.events li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #222;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+.events .what { color: var(--muted); text-align: right; }
+.events .ongoing .what { color: var(--err); font-weight: 600; }
+
 .login {
   display: flex;
   flex-direction: column;

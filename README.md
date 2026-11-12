@@ -19,8 +19,8 @@ howl detection with push alerts, recording, two-way talk and camera controls.
 | 3 | Control service supervises go2rtc, pause/resume | done |
 | 4 | Web client live view (WHEP player, reconnect, quality toggle) | done |
 | 5 | Auth + HTTPS (shared secret, tailscale serve) | done |
-| 6 | PWA + run at boot + keep the Mac awake | built, awaiting manual check |
-| 7 | Howl detection | |
+| 6 | PWA + run at boot + keep the Mac awake | done |
+| 7 | Noise detection: live level meter, event history (ADR-0007) | built, awaiting manual check |
 | 8 | Push notifications | |
 | 9 | Recording and clips | |
 | 10 | Two-way audio | |
@@ -57,6 +57,11 @@ The service starts and supervises go2rtc itself and serves the web client at `/`
 are proxied under `/media/`. `POST /api/cameras/dog/pause` releases the camera for other apps;
 `POST /api/cameras/dog/resume` takes it back; the web client has buttons for both.
 
+Noise detection (ADR-0007): the service listens to the microphone all the time (the camera stays
+off while nobody watches), stores a "noise event" in `data/watchmydog.db` whenever it is loud for
+long enough, and streams the live level to the app. Tunables are in the `sound:` section of the
+config. API: `GET /api/events` (history) and `GET /api/events/stream` (server-sent events).
+
 Web client (`web/`): a WHEP WebRTC player with tap-to-unmute, reconnect with backoff, a stall
 watchdog (reconnects when frames stop, e.g. after a go2rtc restart), fullscreen and a high/low
 quality toggle. The low variant is a second go2rtc stream (`dog_low`) derived from the main one,
@@ -78,7 +83,7 @@ go2rtc standalone with `deploy/go2rtc.yaml` for troubleshooting the capture pipe
 
 ```
 cmd/watchmydog/   process entrypoint, wiring only
-internal/         Go packages (domain, ports, adapters, httpapi, config)
+internal/         Go packages (domain, ports, adapters, app, httpapi, config)
 capture/          wmd-capture, native macOS webcam capture helper (Swift)
 launcher/         WatchMyDog.app, stable parent that holds camera/mic permission (Swift)
 web/              TypeScript web client (Vite)

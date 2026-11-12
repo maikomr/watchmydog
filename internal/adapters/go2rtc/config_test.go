@@ -46,7 +46,8 @@ func TestRenderConfigIsValidYAMLWithExpectedSources(t *testing.T) {
 	if len(srcs) != 2 {
 		t.Fatalf("dog should have 2 sources, got %v", srcs)
 	}
-	video, audio := srcs[0], srcs[1]
+	// Audio comes first so audio-only viewers do not start the camera.
+	audio, video := srcs[0], srcs[1]
 	for _, want := range []string{
 		"exec:sh -c \"", "'/Users/x/.local/bin/wmd-capture' run --device 'REDRAGON Live Camera'",
 		"--width 1280 --height 720 --fps 30", "'/opt/homebrew/bin/ffmpeg'",

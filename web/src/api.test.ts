@@ -57,6 +57,13 @@ describe("api", () => {
     expect(calls[0]).toMatchObject({ url: "/api/logout", init: { method: "POST" } });
   });
 
+  it("lists events for a camera", async () => {
+    const event = { id: "e1", cameraId: "dog", kind: "sound", startedAt: "2026-11-12T10:00:00Z", endedAt: null, peakDbfs: -9 };
+    const calls = stubFetch(200, { events: [event] });
+    await expect(api.events("a b", 20)).resolves.toEqual([event]);
+    expect(calls[0].url).toBe("/api/events?camera=a%20b&limit=20");
+  });
+
   it("escapes camera IDs in URLs", async () => {
     const calls = stubFetch(200, { id: "a b" });
     await api.pause("a b");

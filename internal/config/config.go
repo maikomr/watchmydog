@@ -35,9 +35,30 @@ type Config struct {
 	Auth Auth `yaml:"auth"`
 	// Engine configures the go2rtc media engine.
 	Engine Engine `yaml:"go2rtc"`
+	// Sound configures noise detection on the cameras' microphones.
+	Sound Sound `yaml:"sound"`
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
 }
+
+// Sound is the noise detection section (ADR-0007). Levels are in dBFS:
+// 0 is the loudest the microphone can report, a quiet room is around -50.
+type Sound struct {
+	// Enabled turns detection on. The event history stays readable when off.
+	Enabled bool `yaml:"enabled"`
+	// ThresholdDBFS: at or above this level the sound counts as loud.
+	ThresholdDBFS float64 `yaml:"threshold_dbfs"`
+	// HysteresisDB: how far below the threshold the level must fall to
+	// count as quiet again.
+	HysteresisDB float64 `yaml:"hysteresis_db"`
+	// MinDuration: loud time needed before an event starts.
+	MinDuration time.Duration `yaml:"min_duration"`
+	// QuietTime: quiet time needed before an event ends.
+	QuietTime time.Duration `yaml:"quiet_time"`
+}
+
+// DBPath is the SQLite file that holds the event history.
+func (c Config) DBPath() string { return filepath.Join(c.DataDir, "watchmydog.db") }
 
 // MinSecretLength is the shortest accepted login secret.
 const MinSecretLength = 12
@@ -109,6 +130,13 @@ func Defaults() Config {
 			FFmpegBin:  "ffmpeg",
 			CaptureBin: "wmd-capture",
 			LogLevel:   "info",
+		},
+		Sound: Sound{
+			Enabled:       true,
+			ThresholdDBFS: -30,
+			HysteresisDB:  6,
+			MinDuration:   time.Second,
+			QuietTime:     5 * time.Second,
 		},
 	}
 }
@@ -204,6 +232,21 @@ func (c Config) Validate() error {
 	}
 	if c.Engine.WebRTCPort <= 0 || c.Engine.WebRTCPort > 65535 {
 		errs = append(errs, errors.New("go2rtc.webrtc_port must be 1-65535"))
+	}
+	if s := c.Sound; s.Enabled {
+		if s.ThresholdDBFS > 0 || s.ThresholdDBFS < -90 {
+			errs = append(errs, errors.New("sound.threshold_dbfs must be between -90 and 0"))
+		}
+		if s.HysteresisDB < 0 || s.HysteresisDB > 40 {
+			errs = append(errs, errors.New("sound.hysteresis_db must be between 0 and 40"))
+		}
+		// One measurement covers 100 ms, so shorter times cannot be told apart.
+		if s.MinDuration < 100*time.Millisecond || s.MinDuration > time.Minute {
+			errs = append(errs, errors.New("sound.min_duration must be between 100ms and 1m"))
+		}
+		if s.QuietTime < 100*time.Millisecond || s.QuietTime > 10*time.Minute {
+			errs = append(errs, errors.New("sound.quiet_time must be between 100ms and 10m"))
+		}
 	}
 	seen := map[string]bool{}
 	for _, cam := range c.Cameras {

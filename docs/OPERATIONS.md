@@ -40,6 +40,31 @@ The agent starts at login and restarts the service if it exits for any reason.
    "Stopped" until the app was opened). See
    [TAILSCALE.md](TAILSCALE.md) for `make serve`.
 
+## Noise detection: tuning
+
+The app shows a level meter under the video. The number is the loudness in dBFS: 0 is the loudest
+the microphone can report, a quiet room here is about -50. The orange mark is the alert level.
+Background: [ADR-0007](adr/0007-sound-detection.md).
+
+To tune, edit the `sound:` section of `deploy/watchmydog.local.yaml`, then `make restart-agent`:
+
+| Setting | Default | Change it when |
+|---|---|---|
+| `threshold_dbfs` | -30 | Howling is missed: lower it (e.g. -35). Everyday sounds trigger it: raise it (e.g. -25). Watch the meter while the noise happens and put the threshold a few dB below what it reaches |
+| `min_duration` | 1s | Short sounds (a door, one bark) should count: lower it. `100ms` reacts to a single clap |
+| `quiet_time` | 5s | One howling session shows up as many events: raise it |
+| `hysteresis_db` | 6 | Rarely needed |
+| `enabled` | true | `false` switches detection off; the history stays readable |
+
+Facts worth knowing:
+
+- Detection needs the stream: while the camera is released for OBS/Camo there is **no detection**.
+- The microphone is always on; the camera only while someone watches.
+- Events live in `data/watchmydog.db` (SQLite). Look at them with
+  `sqlite3 data/watchmydog.db "select datetime(started_at/1000,'unixepoch','localtime'), (ended_at-started_at)/1000.0, peak_dbfs from events order by started_at desc limit 20"`.
+  Deleting the file while the service is stopped clears the history.
+- It reacts to loudness, not to what the sound is: a vacuum cleaner counts too.
+
 ## Reboots, power cuts and FileVault
 
 This Mac has **FileVault on**. macOS then does not allow automatic login, and after any reboot the
@@ -50,9 +75,12 @@ runs, so the camera is unreachable.
   unlocks the disk once for the next boot. The Mac then logs in and everything starts by itself.
 - **Unplanned reboots** (power cut, crash, automatic update): someone has to log in at the Mac.
 
-If unattended recovery matters more than disk encryption, turn FileVault off (System Settings >
+**Owner's decision (2026-11-12): FileVault stays on.** Disk encryption matters more than
+unattended recovery, so the limitation above is accepted.
+
+For the record, the alternative: turn FileVault off (System Settings >
 Privacy & Security > FileVault) and enable System Settings > Users & Groups > "Automatically log in
-as". That is a security trade-off for the owner to make; the service works either way.
+as". The service works either way.
 
 ## When something is wrong
 
@@ -63,6 +91,9 @@ as". That is a security trade-off for the owner to make; the service works eithe
 | "Camera released for other apps" | Someone tapped Release: tap "Resume camera" |
 | Login always says wrong secret | `cat data/secret` on the Mac; rotate: delete it, `make secret`, `make restart-agent` (logs out all devices) |
 | Too many attempts | Wait the shown minutes, or `make restart-agent` to clear the lockout |
+| Sound meter shows "–" | No audio is reaching the detector: camera released, or `make logs` shows `audio unavailable` |
+| No noise events although it was loud | Threshold too high for the room: see "Noise detection: tuning" |
+| Too many noise events | Threshold too low or `min_duration` too short: same section |
 | Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size

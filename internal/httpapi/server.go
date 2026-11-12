@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
 )
@@ -32,6 +33,10 @@ type Deps struct {
 	Engine  ports.StreamEngine
 	// WebDir is the built web client directory; empty disables static serving.
 	WebDir string
+
+	// Monitor provides sound events and live levels. Nil disables the
+	// /api/events routes.
+	Monitor *monitor.Service
 
 	// Auth verifies logins and sessions. Nil disables authentication.
 	Auth ports.Authenticator
@@ -73,6 +78,10 @@ func NewHandler(d Deps) http.Handler {
 	mux.Handle("GET /api/cameras/{id}", d.protect(http.HandlerFunc(d.handleGetCamera)))
 	mux.Handle("POST /api/cameras/{id}/pause", d.protect(http.HandlerFunc(d.handlePause)))
 	mux.Handle("POST /api/cameras/{id}/resume", d.protect(http.HandlerFunc(d.handleResume)))
+	if d.Monitor != nil {
+		mux.Handle("GET /api/events", d.protect(http.HandlerFunc(d.handleListEvents)))
+		mux.Handle("GET /api/events/stream", d.protect(http.HandlerFunc(d.handleEventStream)))
+	}
 	if d.Engine != nil {
 		// Player endpoints of the engine, e.g. /media/api/webrtc?src=dog.
 		mux.Handle("/media/", d.protect(http.StripPrefix("/media", d.Engine.MediaHandler())))
