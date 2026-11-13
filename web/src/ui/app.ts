@@ -2,6 +2,7 @@
 // no framework; the player logic lives in ../player and is tested on its own.
 
 import { api, isUnauthorized, type Camera, type SoundEvent, type StreamVariant } from "../api";
+import { describeAudioHealth } from "../player/audio-health";
 import { LivePlayer, type PlayerState, type PlayerStats } from "../player/player";
 import { browserPushEnv, describePush, PushControl, type PushStatus } from "../push/push";
 import { describeEvent, formatWhen, levelFraction, mergeEvent } from "../sound/format";
@@ -234,7 +235,9 @@ export class App {
   }
 
   private onStats(s: PlayerStats): void {
-    this.stats.textContent = `${s.fps.toFixed(0)} fps · ${s.kbps.toFixed(0)} kbit/s · ${this.variant?.height ?? ""}p`;
+    const audio = describeAudioHealth(s.audio);
+    this.stats.textContent =
+      `${s.fps.toFixed(0)} fps · ${s.kbps.toFixed(0)} kbit/s · ${this.variant?.height ?? ""}p` + (audio ? ` · ${audio}` : "");
   }
 
   private setPill(text: string, cls: "" | "ok" | "warn" | "err"): void {

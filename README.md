@@ -21,7 +21,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 5 | Auth + HTTPS (shared secret, tailscale serve) | done |
 | 6 | PWA + run at boot + keep the Mac awake | done |
 | 7 | Noise detection: live level meter, event history (ADR-0007) | done |
-| 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | built, awaiting manual check |
+| 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | done |
 | 9 | Recording and clips | |
 | 10 | Two-way audio | |
 | 11 | Camera PTZ controls | |

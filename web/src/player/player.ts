@@ -4,6 +4,7 @@
 // under us (connection stays "connected" for a while but frames stop), and
 // the phone sleeping. All platform objects are injectable for tests.
 
+import { audioHealth, readAudioCounters, type AudioCounters, type AudioHealth } from "./audio-health";
 import { Backoff } from "./backoff";
 import { postOffer, whepUrl, type FetchLike } from "./whep";
 
@@ -21,6 +22,8 @@ export interface PlayerStats {
   fps: number;
   /** Kilobits per second over the last stats interval. */
   kbps: number;
+  /** Audio quality over the last stats interval; null without audio. */
+  audio: AudioHealth | null;
 }
 
 /** Minimal surface of RTCPeerConnection the player uses (mockable). */
@@ -76,6 +79,7 @@ export class LivePlayer {
   private lastBytes = 0;
   private lastFrameAt = 0;
   private lastStatsAt = 0;
+  private lastAudio: AudioCounters | null = null;
   private generation = 0;
   private listeners: { [K in keyof PlayerEvents]: PlayerEvents[K][] } = { state: [], stats: [] };
 
@@ -236,6 +240,7 @@ export class LivePlayer {
   private startStats(gen: number): void {
     this.lastFrames = 0;
     this.lastBytes = 0;
+    this.lastAudio = null;
     this.lastFrameAt = this.now();
     this.lastStatsAt = this.now();
     this.statsTimer = this.setIntervalFn(() => void this.pollStats(gen), this.statsIntervalMs);
@@ -245,6 +250,7 @@ export class LivePlayer {
     if (gen !== this.generation || !this.pc) return;
     let frames = 0;
     let bytes = 0;
+    let audio: AudioCounters | null = null;
     try {
       const report = await this.pc.getStats();
       report.forEach((s: RTCStats & Record<string, unknown>) => {
@@ -253,6 +259,7 @@ export class LivePlayer {
           bytes += (s.bytesReceived as number) ?? 0;
         } else if (s.type === "inbound-rtp" && s.kind === "audio") {
           bytes += (s.bytesReceived as number) ?? 0;
+          audio = readAudioCounters(s);
         }
       });
     } catch {
@@ -276,7 +283,9 @@ export class LivePlayer {
     this.lastFrames = frames;
     this.lastBytes = bytes;
     this.lastStatsAt = now;
-    for (const fn of this.listeners.stats) fn({ framesDecoded: frames, bytesReceived: bytes, fps, kbps });
+    const health = audio && this.lastAudio ? audioHealth(this.lastAudio, audio) : null;
+    this.lastAudio = audio;
+    for (const fn of this.listeners.stats) fn({ framesDecoded: frames, bytesReceived: bytes, fps, kbps, audio: health });
   }
 
   private scheduleReconnect(delayMs: number, reason: string): void {
