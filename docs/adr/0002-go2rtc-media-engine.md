@@ -37,3 +37,28 @@ does not stop its capture processes while viewers are attached, so the camera wo
 deterministically. A restart takes a fraction of a second, kills every capture process, and the
 web client reconnects on its own. This is acceptable for a single-site edge node; a multi-camera
 cloud deployment would revisit it.
+
+## Amendment (2026-11-16): Opus error correction
+
+On mobile data the owner heard frequent, very short cuts in the live audio; on the Mac itself it
+was clean. The server's audio is continuous (its sample count stayed within about 50 ms of real
+time over 80 minutes), so the cuts are packets lost on the network.
+
+go2rtc's built-in Opus settings use `-application lowdelay`. That mode (CELT only) cannot carry
+Opus **in-band FEC** (forward error correction: each packet also holds a small copy of the previous
+one, so the player can rebuild a lost packet from the next). The generated config now overrides the
+`opus` template with `-c:a libopus -application:a audio -fec 1 -packet_loss 10`.
+
+Measured with a script that reads the mode and the FEC flag from each packet:
+
+| Settings | Encoder mode | Packets carrying FEC (synthesized speech) |
+|---|---|---|
+| go2rtc default (`lowdelay`) | CELT | 0 % |
+| new | hybrid | 81 % |
+
+The bitrate is about the same (around 90 kbit/s for speech), the added delay about 4 ms. The
+encoder adds FEC to voice-like sound (howls, barks, speech), not to steady background noise, where
+a gap is not audible anyway. FEC repairs single lost packets; it does not help when several in a
+row are lost or when packets are only late. The app's stats line shows what is left as
+`audio gaps X% (lost Y%)`.
+
