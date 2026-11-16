@@ -32,7 +32,7 @@ func TestRenderConfigIsValidYAMLWithExpectedSources(t *testing.T) {
 	var parsed struct {
 		API     struct{ Listen string }      `yaml:"api"`
 		WebRTC  struct{ Listen string }      `yaml:"webrtc"`
-		FFmpeg  struct{ Bin, Opus string }   `yaml:"ffmpeg"`
+		FFmpeg  struct{ Bin string }         `yaml:"ffmpeg"`
 		Streams map[string][]string          `yaml:"streams"`
 		Log     struct{ Level, Exec string } `yaml:"log"`
 	}
@@ -41,15 +41,6 @@ func TestRenderConfigIsValidYAMLWithExpectedSources(t *testing.T) {
 	}
 	if parsed.API.Listen != "127.0.0.1:1984" || parsed.WebRTC.Listen != ":8555" || parsed.FFmpeg.Bin != "/opt/homebrew/bin/ffmpeg" {
 		t.Errorf("top-level settings wrong: %+v", parsed)
-	}
-	// The Opus settings must allow in-band error correction: FEC on, an
-	// expected loss above zero, and not the "lowdelay" mode (which cannot
-	// carry it). "-min_comp 0" must stay: without it the capture loses
-	// 5-14 % of the audio (see the ADR-0002 amendment).
-	for _, want := range []string{"-c:a libopus", "-fec 1", "-packet_loss 10", "-application:a audio", "-min_comp 0"} {
-		if !strings.Contains(parsed.FFmpeg.Opus, want) {
-			t.Errorf("ffmpeg.opus = %q, missing %q", parsed.FFmpeg.Opus, want)
-		}
 	}
 	srcs := parsed.Streams["dog"]
 	if len(srcs) != 2 {

@@ -66,7 +66,6 @@ func RenderConfig(s Settings, cameras []domain.Camera) ([]byte, error) {
 	var buf bytes.Buffer
 	err := configTmpl.Execute(&buf, map[string]any{
 		"Settings": s,
-		"OpusArgs": opusArgs,
 		"Streams":  streams,
 	})
 	if err != nil {
@@ -114,30 +113,6 @@ func lowSource(s Settings, c domain.Camera) string {
 	return cmd + " -f rtsp {output}#killsignal=15#killtimeout=5"
 }
 
-// opusArgs replaces go2rtc's built-in Opus encoder settings (what
-// "#audio=opus" expands to). go2rtc's default uses "-application lowdelay",
-// a mode that cannot carry error correction. These settings add Opus
-// in-band FEC (forward error correction): each packet also holds a small,
-// lower-quality copy of the previous one, so when a packet is lost on the
-// way to the phone the player rebuilds it from the next packet instead of
-// leaving a short gap.
-//
-//   - "-application audio" allows the encoder modes that support FEC, without
-//     the speech-only filtering of "voip". It adds about 4 ms of delay.
-//
-//   - "-fec 1 -packet_loss 10" switches FEC on and tells the encoder to
-//     expect about 10 % loss; with 0 it would not spend bits on FEC.
-//
-//   - "-min_comp 0" comes from go2rtc's default and must stay. Opus needs
-//     48 kHz, so ffmpeg resamples the microphone's audio; this option makes
-//     the resampler follow the capture timestamps smoothly. Without it,
-//     measured on this Mac, 5-14 % of the audio went missing at the source
-//     (a 12 ms hole several times a second).
-//
-// The encoder adds the copies to voice-like sound (howling, barking,
-// speech); steady background noise goes without, where a gap is inaudible.
-const opusArgs = "-c:a libopus -application:a audio -fec 1 -packet_loss 10 -min_comp 0"
-
 // audioSource builds the ffmpeg:device source for a camera's audio.
 func audioSource(c domain.Camera) string {
 	return "ffmpeg:device?audio=" + url.QueryEscape(c.Audio.Device) + "#audio=opus"
@@ -166,7 +141,6 @@ webrtc:
   listen: ":{{.Settings.WebRTCPort}}"
 ffmpeg:
   bin: {{yamlString .Settings.FFmpegBin}}
-  opus: {{yamlString .OpusArgs}}
 log:
   level: {{.Settings.LogLevel}}
   exec: debug

@@ -38,44 +38,24 @@ deterministically. A restart takes a fraction of a second, kills every capture p
 web client reconnects on its own. This is acceptable for a single-site edge node; a multi-camera
 cloud deployment would revisit it.
 
-## Amendment (2026-11-16): Opus error correction
+## Amendment 2026-11-16: Opus error correction tried and withdrawn
 
-On mobile data the owner heard frequent, very short cuts in the live audio; on the Mac itself it
-was clean. The server's audio is continuous (its sample count stayed within about 50 ms of real
-time over 80 minutes), so the cuts are packets lost on the network.
+Short audio cuts were reported on mobile data. Opus in-band error correction (FEC) was tried by
+overriding go2rtc's `opus` ffmpeg template (`-application:a audio -fec 1 -packet_loss 10`).
 
-go2rtc's built-in Opus settings use `-application lowdelay`. That mode (CELT only) cannot carry
-Opus **in-band FEC** (forward error correction: each packet also holds a small copy of the previous
-one, so the player can rebuild a lost packet from the next). The generated config now overrides the
-`opus` template with `-c:a libopus -application:a audio -fec 1 -packet_loss 10 -min_comp 0`.
+- First version (`c3e9ad9`) left out go2rtc's `-min_comp 0` and lost 5–14 % of the audio at the
+  source.
+- Second version (`1fa7dec`) restored it and measured clean on the Mac (50 packets/s without
+  holes, 0 % concealed in a headless browser on loopback), but the owner heard the audio as rapid
+  bursts on a real device.
 
-**`-min_comp 0` must stay.** The first version of this change left it out (it looked like an
-unrelated leftover of go2rtc's default) and broke the audio: the owner saw 5-10 % "audio gaps" with
-no packet loss. Opus needs 48 kHz while the microphone delivers 44.1 kHz, so ffmpeg resamples; the
-option makes the resampler follow the capture timestamps smoothly. Measured on this Mac by
-capturing the same microphone with several settings at once and counting holes in the packet
-timestamps:
+Both were reverted. The encoder settings are go2rtc's defaults again
+(`-c:a libopus -application:a lowdelay -min_comp 0`), which play cleanly on the local network and
+with occasional short cuts on mobile data.
 
-| Settings | Audio missing at the source |
-|---|---|
-| go2rtc default (`lowdelay`, `-min_comp 0`) | 0 % |
-| `audio` + FEC, without `-min_comp 0` | 5-14 % (a 12 ms hole several times a second) |
-| `lowdelay` + FEC, without `-min_comp 0` | 12 % |
-| `audio` + FEC + `-min_comp 0` (current) | 0 % |
+What to take from it:
 
-A browser on the Mac itself (no network) reported 4.7-6.1 % concealed audio before the fix and
-0.00 % after.
-
-Measured with a script that reads the mode and the FEC flag from each packet:
-
-| Settings | Encoder mode | Packets carrying FEC (synthesized speech) |
-|---|---|---|
-| go2rtc default (`lowdelay`) | CELT | 0 % |
-| new | hybrid | 81 % (70 % on the live microphone with speech from the Mac's speaker) |
-
-The bitrate is about the same (around 90 kbit/s for speech), the added delay about 4 ms. The
-encoder adds FEC to voice-like sound (howls, barks, speech), not to steady background noise, where
-a gap is not audible anyway. FEC repairs single lost packets; it does not help when several in a
-row are lost or when packets are only late. The app's stats line shows what is left as
-`audio gaps X% (lost Y%)`.
-
+- A clean measurement on loopback does not show how the stream plays on the phone. An audio
+  change counts as verified only after listening on the phone.
+- The cause of the bursts with the second version is not known. A new attempt should start from
+  the phone's `audio gaps` readout and `chrome://webrtc-internals`, not from the encoder.

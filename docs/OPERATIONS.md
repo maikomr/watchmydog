@@ -126,7 +126,6 @@ as". The service works either way.
 | No notification although the event is in the list | `make logs`: `no notification` gives the reason (cooldown, quiet hours, no device). If it says `notification sent`: on the phone check Do Not Disturb, Settings > Apps > watchmydog (or Chrome) > Notifications, and that battery use is not "Restricted" |
 | "Send test" says the subscription has expired | Tap Turn off, then Turn on |
 | App says notifications are blocked | Chrome > site settings for the app's address > Notifications > Allow, then reopen the app |
-| Live audio has short cuts | The stats line under the video shows `audio gaps X% (lost Y%)` when the phone had to fill in audio. With "lost" above zero it is the phone's network; single lost packets are repaired by error correction (ADR-0002 amendment), bursts are not |
 | Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size
