@@ -52,6 +52,13 @@ recording:
   max_disk_mb: 10000    # disk space for all clips; the oldest are deleted to stay below
   keep_for: 720h        # delete clips older than this; 0s = only the disk limit deletes
 
+# Talking to the dog (ADR-0010): "Hold to talk" in the app plays the phone's
+# microphone on this Mac's sound output.
+talk:
+  enabled: true
+  volume: 100           # 1-100, the player's volume; the Mac's own volume applies on top
+  # ffplay_bin: /opt/homebrew/bin/ffplay   # default: the ffplay next to go2rtc.ffmpeg_bin
+
 # Notifications to phones (ADR-0008, guide in docs/OPERATIONS.md). Each device
 # switches them on in the app. Restart the service after changing these.
 push:

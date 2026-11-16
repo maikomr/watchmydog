@@ -60,6 +60,8 @@ type Service struct {
 
 	mu       sync.Mutex
 	lastSent map[domain.CameraID]time.Time
+	// heldOff: no notifications for the camera before this time.
+	heldOff map[domain.CameraID]time.Time
 }
 
 // New builds the service. notifier may be nil when s.Enabled is false.
@@ -76,6 +78,19 @@ func New(store ports.SubscriptionStore, notifier ports.Notifier, cameras []domai
 		store: store, notifier: notifier, settings: s, names: names, logger: logger,
 		now: time.Now, queue: make(chan domain.Event, queueSize),
 		lastSent: map[domain.CameraID]time.Time{},
+		heldOff:  map[domain.CameraID]time.Time{},
+	}
+}
+
+// HoldOff suppresses notifications for the camera until the given time. The
+// talk service calls it while the owner speaks through the loudspeaker: the
+// microphone hears their voice as noise, and they are in the app already.
+// A later call replaces an earlier one only if it reaches further.
+func (s *Service) HoldOff(cam domain.CameraID, until time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if until.After(s.heldOff[cam]) {
+		s.heldOff[cam] = until
 	}
 }
 
@@ -141,6 +156,9 @@ func (s *Service) suppress(e domain.Event, now time.Time) string {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if until, ok := s.heldOff[e.CameraID]; ok && now.Before(until) {
+		return "the owner is talking through the loudspeaker"
+	}
 	if last, ok := s.lastSent[e.CameraID]; ok && s.settings.Cooldown > 0 {
 		if wait := s.settings.Cooldown - now.Sub(last); wait > 0 {
 			return fmt.Sprintf("cooldown, %s left", wait.Round(time.Second))

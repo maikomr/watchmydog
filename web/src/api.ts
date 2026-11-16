@@ -33,6 +33,8 @@ export interface Camera {
   height: number;
   fps: number;
   hasAudio: boolean;
+  /** True when the owner can talk through the loudspeaker at this camera. */
+  canTalk: boolean;
   state: CameraState;
   consumers: number;
   detail?: string;
@@ -166,6 +168,16 @@ export const api = {
   /** Asks the server for a test notification to this device. */
   pushTest: async (endpoint: string) => {
     await request("/api/push/test", jsonPost({ endpoint }));
+  },
+  /** Opens the loudspeaker at the camera; resolves to the talk session id. */
+  talkStart: async (cameraId: string) =>
+    (await postJSON<{ session: string }>(`/api/cameras/${encodeURIComponent(cameraId)}/talk`)).session,
+  /** Sends piece number `seq` (0, 1, 2, ...) of the recording. */
+  talkChunk: async (session: string, seq: number, data: Blob) => {
+    await request(`/api/talk/${encodeURIComponent(session)}/chunks/${seq}`, { method: "PUT", body: data });
+  },
+  talkStop: async (session: string) => {
+    await request(`/api/talk/${encodeURIComponent(session)}`, { method: "DELETE" });
   },
   clips: (cameraId: string, limit: number) =>
     getJSON<ClipList>(`/api/clips?camera=${encodeURIComponent(cameraId)}&limit=${limit}`),

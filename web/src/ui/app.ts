@@ -8,6 +8,7 @@ import { LivePlayer, type PlayerState, type PlayerStats } from "../player/player
 import { browserPushEnv, describePush, PushControl, type PushStatus } from "../push/push";
 import { describeEvent, formatWhen, levelFraction, mergeEvent } from "../sound/format";
 import { SoundStream, type SoundHello, type SoundLevel } from "../sound/stream";
+import { browserTalkEnv, Talker, type TalkState } from "../talk/talk";
 import { el } from "./dom";
 import { pickCamera } from "./route";
 
@@ -23,6 +24,12 @@ const CLIP_LIST_MAX = 20;
  * to wait for.
  */
 const CLIP_POLL_MS = 15_000;
+/**
+ * How long the live sound stays off after talking. The microphone at the
+ * camera hears the loudspeaker, and the live stream is about a second
+ * behind, so without the wait the owner hears the end of their own words.
+ */
+const TALK_UNMUTE_DELAY_MS = 1500;
 
 export interface AppHooks {
   /** The session is missing or expired: show the login screen. */
@@ -73,6 +80,13 @@ export class App {
   private readonly fullscreenBtn = el("button", { class: "btn" }, "Fullscreen");
   private readonly pauseBtn = el("button", { class: "btn" }, "Release camera");
   private readonly logoutBtn = el("button", { class: "btn" }, "Log out");
+  // Talking to the dog: hold the button, speak, release.
+  private readonly talkBtn = el("button", { class: "btn talk hidden" }, "Hold to talk");
+  private readonly talkNote = el("div", { class: "stats talk-note" }, "");
+  private talker: Talker | null = null;
+  /** Whether the live sound was on when talking began. */
+  private unmuteAfterTalk = false;
+  private talkTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly stats = el("div", { class: "stats" }, "");
   private readonly stage = el("div", { class: "stage" });
   // Sound section: level meter with a threshold mark, then the event list.
@@ -116,7 +130,15 @@ export class App {
     this.overlay.append(this.overlayText, this.unmuteBtn, this.resumeBtn);
     this.stage.append(this.video, this.overlay);
     const header = el("header", {}, this.title, this.pill);
-    const controls = el("div", { class: "controls" }, this.qualityBtn, this.fullscreenBtn, this.pauseBtn, this.logoutBtn);
+    const controls = el(
+      "div",
+      { class: "controls" },
+      this.talkBtn,
+      this.qualityBtn,
+      this.fullscreenBtn,
+      this.pauseBtn,
+      this.logoutBtn,
+    );
     const meter = el("div", { class: "meter" }, this.meterFill, this.meterMark);
     const sound = el(
       "section",
@@ -133,7 +155,7 @@ export class App {
       this.clipList,
     );
     this.pushBtn.disabled = true;
-    this.root.replaceChildren(header, this.stage, controls, this.stats, sound);
+    this.root.replaceChildren(header, this.stage, controls, this.talkNote, this.stats, sound);
 
     this.unmuteBtn.addEventListener("click", () => {
       this.video.muted = false;
@@ -145,6 +167,18 @@ export class App {
     this.qualityBtn.addEventListener("click", () => this.toggleQuality());
     this.fullscreenBtn.addEventListener("click", () => void this.toggleFullscreen());
     this.logoutBtn.addEventListener("click", () => this.hooks.onLogout());
+    // Pointer events cover finger, mouse and pen. Capturing the pointer
+    // keeps the "up" coming to the button when the finger slides off it.
+    this.talkBtn.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      this.talkBtn.setPointerCapture(ev.pointerId);
+      void this.talker?.press();
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+      this.talkBtn.addEventListener(type, () => void this.talker?.release());
+    }
+    // A long press would otherwise open the browser's context menu.
+    this.talkBtn.addEventListener("contextmenu", (ev) => ev.preventDefault());
     this.pushBtn.addEventListener("click", () => void this.togglePush());
     this.pushTestBtn.addEventListener("click", () => void this.testPush());
     this.video.addEventListener("volumechange", () => this.renderOverlay());
@@ -164,6 +198,9 @@ export class App {
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     if (this.clipTimer !== null) clearInterval(this.clipTimer);
+    if (this.talkTimer !== null) clearTimeout(this.talkTimer);
+    this.talkTimer = null;
+    void this.talker?.release();
     this.pollTimer = this.retryTimer = this.clipTimer = null;
     document.removeEventListener("visibilitychange", this.onVisibility);
   }
@@ -189,6 +226,7 @@ export class App {
       this.pollTimer = setInterval(() => void this.refreshCamera(), CAMERA_POLL_MS);
       this.startPlayer();
       this.startSound(camera);
+      this.startTalk(camera);
       void this.loadClips();
       this.clipTimer = setInterval(() => void this.loadClips(), CLIP_POLL_MS);
     } catch (err) {
@@ -351,6 +389,45 @@ export class App {
     if (this.events.length > 0) this.eventsNote.textContent = "";
     else if (this.eventsNote.dataset.disabled) this.eventsNote.textContent = "Noise detection is switched off.";
     else this.eventsNote.textContent = "No noise detected yet.";
+  }
+
+  // --- talk ----------------------------------------------------------------
+
+  private startTalk(c: Camera): void {
+    if (!c.canTalk) return;
+    const env = browserTalkEnv();
+    this.talkBtn.classList.remove("hidden");
+    if (!env.supported) {
+      this.talkBtn.disabled = true;
+      this.talkNote.textContent = "Talking needs Chrome or Firefox on this device.";
+      return;
+    }
+    this.talker = new Talker(env, api, c.id, (state, note) => this.onTalkState(state, note));
+  }
+
+  private onTalkState(state: TalkState, note?: string): void {
+    if (this.destroyed) return;
+    this.talkBtn.classList.toggle("talking", state === "talking");
+    this.talkBtn.textContent =
+      state === "talking" ? "Talking: release to stop" : state === "starting" ? "Starting…" : "Hold to talk";
+    this.talkNote.textContent = note ?? "";
+    if (state === "starting") {
+      // Silence the live sound: otherwise the phone plays the owner's own
+      // voice back, late, and its microphone records that again.
+      if (this.talkTimer !== null) {
+        clearTimeout(this.talkTimer); // talking again before the sound came back
+        this.talkTimer = null;
+      } else {
+        this.unmuteAfterTalk = !this.video.muted;
+      }
+      this.video.muted = true;
+    } else if (state === "idle" && this.unmuteAfterTalk && this.talkTimer === null) {
+      this.talkTimer = setTimeout(() => {
+        this.talkTimer = null;
+        this.unmuteAfterTalk = false;
+        this.video.muted = false;
+      }, TALK_UNMUTE_DELAY_MS);
+    }
   }
 
   // --- clips ---------------------------------------------------------------

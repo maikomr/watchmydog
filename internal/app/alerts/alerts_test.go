@@ -325,3 +325,25 @@ func TestDeviceLabelHidesTheEndpoint(t *testing.T) {
 		t.Errorf("label = %q", got)
 	}
 }
+
+func TestHoldOffSuppressesWithoutStartingTheCooldown(t *testing.T) {
+	f := newFixture(t, Settings{Enabled: true, Cooldown: 5 * time.Minute}, "phone")
+	ctx := context.Background()
+
+	f.svc.HoldOff("dog", t0.Add(10*time.Second))
+	f.svc.HoldOff("dog", t0.Add(5*time.Second)) // an earlier end does not shorten it
+	f.now = t0.Add(9 * time.Second)
+	f.svc.handle(ctx, event("e1", "dog"))
+	if got := f.notif.count(); got != 0 {
+		t.Fatalf("while held off: %d notifications, want 0", got)
+	}
+	f.svc.handle(ctx, event("e2", "yard")) // other camera is not affected
+	if got := f.notif.count(); got != 1 {
+		t.Fatalf("other camera: %d notifications, want 1", got)
+	}
+	f.now = t0.Add(10 * time.Second)
+	f.svc.handle(ctx, event("e3", "dog"))
+	if got := f.notif.count(); got != 2 {
+		t.Fatalf("after the hold: %d notifications, want 2 (no cooldown from the suppressed event)", got)
+	}
+}

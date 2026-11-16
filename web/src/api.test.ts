@@ -104,4 +104,25 @@ describe("api", () => {
     stubFetch(404, { error: "clip not found" });
     await expect(api.deleteClip("abc")).rejects.toThrow("clip not found");
   });
+
+  it("starts a talk session, sends numbered chunks and stops", async () => {
+    let calls = stubFetch(201, { session: "abc" });
+    expect(await api.talkStart("dog")).toBe("abc");
+    expect(calls[0].url).toBe("/api/cameras/dog/talk");
+    expect(calls[0].init?.method).toBe("POST");
+
+    calls = stubFetch(204);
+    const chunk = new Blob(["voice"]);
+    await api.talkChunk("abc", 7, chunk);
+    expect(calls[0].url).toBe("/api/talk/abc/chunks/7");
+    expect(calls[0].init?.method).toBe("PUT");
+    expect(calls[0].init?.body).toBe(chunk);
+
+    await api.talkStop("abc");
+    expect(calls[1].url).toBe("/api/talk/abc");
+    expect(calls[1].init?.method).toBe("DELETE");
+
+    stubFetch(410, { error: "talk session not found or already ended" });
+    await expect(api.talkChunk("abc", 8, chunk)).rejects.toThrow("already ended");
+  });
 });

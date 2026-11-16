@@ -41,8 +41,34 @@ type Config struct {
 	Push Push `yaml:"push"`
 	// Recording configures the clips made of noise events.
 	Recording Recording `yaml:"recording"`
+	// Talk configures talking through the Mac's loudspeaker.
+	Talk Talk `yaml:"talk"`
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
+}
+
+// Talk is the two-way audio section (ADR-0010).
+type Talk struct {
+	// Enabled lets the owner talk through the Mac's audio output from the
+	// app.
+	Enabled bool `yaml:"enabled"`
+	// FFplayBin is the ffplay executable that plays the voice. Empty means
+	// the ffplay next to go2rtc.ffmpeg_bin (Homebrew installs both).
+	FFplayBin string `yaml:"ffplay_bin"`
+	// Volume is the player's volume, 1 to 100. The Mac's own output volume
+	// applies on top.
+	Volume int `yaml:"volume"`
+}
+
+// FFplayPath is the ffplay executable to use.
+func (c Config) FFplayPath() string {
+	if c.Talk.FFplayBin != "" {
+		return c.Talk.FFplayBin
+	}
+	if dir := filepath.Dir(c.Engine.FFmpegBin); dir != "." {
+		return filepath.Join(dir, "ffplay")
+	}
+	return "ffplay"
 }
 
 // Recording is the clips section (ADR-0009).
@@ -207,6 +233,7 @@ func Defaults() Config {
 			MinDuration:   time.Second,
 			QuietTime:     5 * time.Second,
 		},
+		Talk: Talk{Enabled: true, Volume: 100},
 		Recording: Recording{
 			Enabled:   true,
 			PreRoll:   15 * time.Second,
@@ -342,6 +369,9 @@ func (c Config) Validate() error {
 		if !strings.HasPrefix(contact, "https://") && !strings.Contains(contact, "@") {
 			errs = append(errs, errors.New("push.contact must be an email address or an https URL"))
 		}
+	}
+	if t := c.Talk; t.Enabled && (t.Volume < 1 || t.Volume > 100) {
+		errs = append(errs, errors.New("talk.volume must be between 1 and 100"))
 	}
 	if r := c.Recording; r.Enabled {
 		if r.PreRoll < 0 || r.PreRoll > time.Minute {

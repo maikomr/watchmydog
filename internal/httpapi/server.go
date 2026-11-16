@@ -18,6 +18,7 @@ import (
 	"github.com/maikomr/watchmydog/internal/app/alerts"
 	"github.com/maikomr/watchmydog/internal/app/clips"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
+	"github.com/maikomr/watchmydog/internal/app/talk"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
 )
@@ -45,6 +46,9 @@ type Deps struct {
 	Alerts *alerts.Service
 	// Clips manages recorded clips. Nil disables the /api/clips routes.
 	Clips *clips.Service
+	// Talk plays the owner's voice at a camera. Nil disables the talk
+	// routes.
+	Talk *talk.Service
 	// Auth verifies logins and sessions. Nil disables authentication.
 	Auth ports.Authenticator
 	// LoginMaxFailures and LoginWindow tune login rate limiting
@@ -100,6 +104,11 @@ func NewHandler(d Deps) http.Handler {
 		mux.Handle("GET /api/clips/{id}/video.mp4", d.protect(http.HandlerFunc(d.handleClipVideo)))
 		mux.Handle("DELETE /api/clips/{id}", d.protect(http.HandlerFunc(d.handleDeleteClip)))
 	}
+	if d.Talk != nil {
+		mux.Handle("POST /api/cameras/{id}/talk", d.protect(http.HandlerFunc(d.handleTalkStart)))
+		mux.Handle("PUT /api/talk/{session}/chunks/{seq}", d.protect(http.HandlerFunc(d.handleTalkChunk)))
+		mux.Handle("DELETE /api/talk/{session}", d.protect(http.HandlerFunc(d.handleTalkStop)))
+	}
 	if d.Engine != nil {
 		// Player endpoints of the engine, e.g. /media/api/webrtc?src=dog.
 		mux.Handle("/media/", d.protect(http.StripPrefix("/media", d.Engine.MediaHandler())))
@@ -142,6 +151,9 @@ type cameraView struct {
 	State     string `json:"state"`
 	Consumers int    `json:"consumers"`
 	Detail    string `json:"detail,omitempty"`
+	// CanTalk is true when the owner can talk through the loudspeaker at
+	// this camera.
+	CanTalk bool `json:"canTalk"`
 	// Stream names the engine stream to request under /media/ (best quality).
 	Stream string `json:"stream"`
 	// Streams lists every quality variant, best first.
@@ -159,6 +171,7 @@ func (d Deps) view(r *http.Request, c domain.Camera) cameraView {
 	v := cameraView{
 		ID: string(c.ID), Name: c.Name, Width: c.Video.Width, Height: c.Video.Height, FPS: c.Video.FPS,
 		HasAudio: c.HasAudio(), State: string(domain.StreamError), Stream: string(c.ID),
+		CanTalk: d.Talk != nil && d.Talk.Enabled(),
 	}
 	for _, sv := range c.Variants() {
 		v.Streams = append(v.Streams, streamView{Quality: string(sv.Quality), Name: sv.Name, Width: sv.Width, Height: sv.Height})
@@ -298,6 +311,11 @@ func logRequests(log *slog.Logger, next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
+		// Voice chunks arrive several times a second while the owner
+		// talks; only failures are worth a log line.
+		if r.Method == http.MethodPut && rec.status < 400 && strings.HasPrefix(r.URL.Path, "/api/talk/") {
+			return
+		}
 		log.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,

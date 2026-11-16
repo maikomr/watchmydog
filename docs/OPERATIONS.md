@@ -97,6 +97,21 @@ Facts worth knowing:
 - `make logs` shows `clip saved` and `clip deleted` (with the reason).
 - Disk use: `du -sh data/recordings/*`.
 
+## Talking to the dog
+
+Background: [ADR-0010](adr/0010-two-way-audio.md).
+
+In the app, hold "Hold to talk", speak, release. The first time the browser asks for the
+microphone; allow it and press again. The voice comes out of the Mac's current sound output.
+
+- **Volume and output:** set on the Mac (System Settings > Sound > Output). `talk.volume` (1 to
+  100, default 100) in the config only scales the player's part.
+- While talking, and for about 10 s after, no notification is sent. The noise still appears in
+  the event list and gets a clip.
+- The live sound on the phone is off while the button is down and comes back 1.5 s after.
+- `talk.enabled: false` removes the button.
+- `make logs` shows `talk started` and `talk ended` with the reason and length.
+
 ## Notifications
 
 Background: [ADR-0008](adr/0008-push-notifications.md).
@@ -161,6 +176,10 @@ as". The service works either way.
 | A noise event has no clip | Wait half a minute. Then `make logs`: `no clip: nothing was recorded` (camera was released, or the service had just started) or `recording unavailable` |
 | Clips disappear | `make logs`: `clip deleted` gives the reason. Raise `recording.max_disk_mb` or `recording.keep_for` |
 | A clip does not play on a device | Clips are H.264 + Opus in MP4: use Chrome or Firefox. "Save" downloads the file |
+| No "Hold to talk" button | `make logs`: `talking is off: ffplay not found` (install ffmpeg with Homebrew or set `talk.ffplay_bin`), or `talk.enabled: false` |
+| Talking: nothing comes out of the Mac | Mac's sound output and volume (System Settings > Sound). `make logs`: `talk ended` with `err=` names the cause; `kb=0` means nothing arrived from the phone |
+| Talking: "The microphone is blocked" | Chrome > site settings for the app's address > Microphone > Allow |
+| Talking stops by itself | After 2 minutes by design; earlier means the phone's connection dropped for 3 s |
 | Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size

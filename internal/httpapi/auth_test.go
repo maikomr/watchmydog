@@ -15,6 +15,7 @@ import (
 
 	"github.com/maikomr/watchmydog/internal/adapters/store/memory"
 	"github.com/maikomr/watchmydog/internal/app/alerts"
+	"github.com/maikomr/watchmydog/internal/app/talk"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
 )
@@ -59,6 +60,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 	clipSvc, _ := newClips(t, clipRules)
 	h := NewHandler(Deps{
 		Clips:            clipSvc,
+		Talk:             talk.New(&memSpeaker{}, talkRules, slog.New(slog.NewTextHandler(io.Discard, nil))),
 		Logger:           slog.New(slog.NewTextHandler(logs, nil)),
 		Now:              clock.now,
 		Cameras:          []domain.Camera{dog()},
@@ -108,6 +110,9 @@ func TestProtectedRoutesRequireSession(t *testing.T) {
 		{http.MethodPost, "/api/push/subscribe"},
 		{http.MethodPost, "/api/push/unsubscribe"},
 		{http.MethodPost, "/api/push/test"},
+		{http.MethodPost, "/api/cameras/dog/talk"},
+		{http.MethodPut, "/api/talk/abc/chunks/0"},
+		{http.MethodDelete, "/api/talk/abc"},
 		{http.MethodGet, "/api/clips"},
 		{http.MethodGet, "/api/clips/0123456789abcdef0123456789abcdef/video.mp4"},
 		{http.MethodDelete, "/api/clips/0123456789abcdef0123456789abcdef"},

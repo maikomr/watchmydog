@@ -28,12 +28,12 @@ Commit per increment (or per meaningful step inside one) with a message of the f
 
 - `internal/domain` – entities and value objects, no imports from adapters.
 - `internal/ports` – interfaces the domain needs from the outside world
-  (StreamEngine, SoundDetector, Notifier, Recorder, EventStore, Authenticator, CameraControl).
+  (StreamEngine, SoundDetector, Notifier, Recorder, Speaker, EventStore, Authenticator, CameraControl).
 - `internal/adapters/<port>/<impl>` – one package per concrete implementation.
 - `internal/app/<service>` – application services that connect ports (`monitor`: detector →
   events → store and live subscribers; `alerts`: event → rules → notifier for every subscribed
   device; `clips`: events → which part of the recording becomes a clip, and how long clips are
-  kept; `cameras`: remembers released cameras). No I/O of their own; tested with fakes.
+  kept; `cameras`: remembers released cameras; `talk`: voice chunks from the phone → in order → speaker). No I/O of their own; tested with fakes.
 - `internal/httpapi` – HTTP handlers; translate requests into port and service calls, no business rules.
 - `cmd/watchmydog` – wiring and process lifecycle only.
 
@@ -64,3 +64,5 @@ spot later.
 | fix | 2026-11-16 | automated part pass | Released camera survives restarts (`6507dae`). `make check` green. A second copy of the service on other ports with its own data directory: release → restart → still released; kill -9 → start → still released (go2rtc config without the camera, log `cameras stay released from before the restart`); resume → restart → live. Not yet installed on the running service; owner check pending |
 | fix | 2026-11-16 | pass | Owner ran the check on the installed service (`9f5bf9a`): released, restarted (log: `cameras stay released from before the restart`), resumed from the app |
 | 9 | 2026-11-16 | automated part pass | `make check` green (84 web tests; the recorder test joins real video files with ffmpeg). A second copy of the service on other ports, recording from the live stream: ring files of 10 s; a spoken test noise gave a clip that begins before the noise (H.264 + Opus MP4, index at the front, decodes without errors, no irregular frame gaps); a long noise was split at `max_clip`; range request answers 206; the clip plays in a browser at phone width (1280x720) and silences the live view; delete answers 204, then 404, and removes the file; with `max_disk_mb: 200` the eleventh clip made the oldest be deleted (log: `over recording.max_disk_mb`) and use stayed at 200 MB. Measured: capture 11 %, encoding 8 %, recorder 1.5 % of one core. Not checked yet: on the phone, on the installed service, and over 24 h |
+| 9 | 2026-11-16 | pass (24 h check open) | Installed by the owner (`ad311ad`). Log: `recording on`, a clip saved for a noise and deleted by the owner from the app. The disk-use check after 24 h is still open |
+| 10 | 2026-11-16 | automated part pass | `make check` green (94 web tests). A second copy of the service whose ffplay is a script that writes to a file (no sound): a WebM/Opus stream sent in pieces, two of them swapped, arrived byte for byte; in Chrome, the app's button driven with a generated tone instead of the microphone gave `talk started` / `talk ended reason=stopped duration=3s`, the live view was muted meanwhile, and the received stream decoded as Opus audio. Not checked: sound from the real loudspeaker, the delay, the phone. Audible tests were not run because the camera was released at the time |

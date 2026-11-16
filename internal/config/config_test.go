@@ -412,3 +412,40 @@ func TestRecordingValidation(t *testing.T) {
 		t.Errorf("disabled recording: %v", err)
 	}
 }
+
+func TestTalkDefaultsOverridesAndValidation(t *testing.T) {
+	load := func(yaml string) (Config, error) {
+		return Load([]string{"-config", "/c.yaml"}, env(nil), files(map[string]string{"/c.yaml": "auth: {disabled: true}\n" + yaml}))
+	}
+	cfg, err := load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Talk != (Talk{Enabled: true, Volume: 100}) {
+		t.Errorf("defaults = %+v", cfg.Talk)
+	}
+	if got := cfg.FFplayPath(); got != "ffplay" {
+		t.Errorf("FFplayPath = %q, want ffplay (ffmpeg is found via PATH too)", got)
+	}
+
+	cfg, err = load("go2rtc: {ffmpeg_bin: /opt/homebrew/bin/ffmpeg}\ntalk: {volume: 60}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Talk.Volume != 60 || cfg.FFplayPath() != "/opt/homebrew/bin/ffplay" {
+		t.Errorf("talk = %+v, FFplayPath = %q", cfg.Talk, cfg.FFplayPath())
+	}
+	cfg, _ = load("talk: {ffplay_bin: /usr/local/bin/ffplay}\n")
+	if cfg.FFplayPath() != "/usr/local/bin/ffplay" {
+		t.Errorf("FFplayPath = %q", cfg.FFplayPath())
+	}
+
+	for _, bad := range []string{"talk: {volume: 0}\n", "talk: {volume: 101}\n"} {
+		if _, err := load(bad); err == nil || !strings.Contains(err.Error(), "talk.volume") {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+	if _, err := load("talk: {enabled: false, volume: 0}\n"); err != nil {
+		t.Errorf("disabled talk: %v", err)
+	}
+}

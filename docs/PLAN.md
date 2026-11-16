@@ -171,6 +171,11 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** trigger noise → clip appears listing start time and duration, playback shows the ~15 s before the noise; disk usage stays below the configured cap after 24 h.
 
 ### 10. Two-way audio (talk to the dog)
+
+> Outcome note (2026-11-16): built the fallback, not the go2rtc backchannel, and with numbered HTTP
+> requests instead of a WebSocket; reasons in ADR-0010 (sound quality, issue #2084, and the service
+> must know when someone talks to hold notifications back). The delay on the phone is not measured
+> yet.
 - Primary: go2rtc `exec:ffplay -nodisp -f s16le -ar 48000 -ac 1 -i -#backchannel=1` stream; client WebRTC `sendrecv` with push-to-talk button (mic requires HTTPS, done in step 5).
 - Fallback if go2rtc issue #2084 (backchannel shows send-only) bites: `/ws/talk` WebSocket, client `MediaRecorder` Opus/WebM 100 ms chunks → Go → `ffplay` stdin.
 - **Verify:** hold talk button on the phone, speak → heard from Mac mini speakers under ~1 s; release → silence; live audio from the dog keeps playing.

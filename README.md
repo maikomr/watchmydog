@@ -23,7 +23,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 7 | Noise detection: live level meter, event history (ADR-0007) | done |
 | 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | done |
 | 9 | Recording and clips: ring of the last minutes, a clip per noise with 15 s before and after (ADR-0009) | done |
-| 10 | Two-way audio | |
+| 10 | Two-way audio: hold a button to talk through the Mac's loudspeaker (ADR-0010) | built, phone check pending |
 | 11 | Camera PTZ controls | |
 | 12 | SaaS readiness | |
 
@@ -67,6 +67,10 @@ clip for every noise, starting 15 s before it. Because of that the camera runs a
 Clips live in `data/recordings/clips`, are limited by `recording.max_disk_mb` and
 `recording.keep_for`, and are listed under "Clips" in the app. API: `GET /api/clips`,
 `GET /api/clips/{id}/video.mp4`, `DELETE /api/clips/{id}`.
+
+Talking (ADR-0010): "Hold to talk" in the app records the phone's microphone and the Mac plays it
+on its loudspeaker with `ffplay`. No notifications are sent while talking. API:
+`POST /api/cameras/{id}/talk`, `PUT /api/talk/{session}/chunks/{n}`, `DELETE /api/talk/{session}`.
 
 Web client (`web/`): a WHEP WebRTC player with tap-to-unmute, reconnect with backoff, a stall
 watchdog (reconnects when frames stop, e.g. after a go2rtc restart), fullscreen and a high/low

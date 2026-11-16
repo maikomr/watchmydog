@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -24,11 +25,13 @@ import (
 	"github.com/maikomr/watchmydog/internal/adapters/power"
 	recorder "github.com/maikomr/watchmydog/internal/adapters/recorder/ffmpeg"
 	"github.com/maikomr/watchmydog/internal/adapters/sound/threshold"
+	"github.com/maikomr/watchmydog/internal/adapters/speaker/ffplay"
 	"github.com/maikomr/watchmydog/internal/adapters/store/sqlite"
 	"github.com/maikomr/watchmydog/internal/app/alerts"
 	"github.com/maikomr/watchmydog/internal/app/cameras"
 	"github.com/maikomr/watchmydog/internal/app/clips"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
+	"github.com/maikomr/watchmydog/internal/app/talk"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
 	"github.com/maikomr/watchmydog/internal/domain"
@@ -147,6 +150,16 @@ func run() error {
 	mon.OnEventStart(notify.EventStarted)
 	go notify.Run(ctx)
 
+	// Talking through the loudspeaker (ADR-0010). The microphone hears the
+	// owner's voice as noise, so notifications are held back meanwhile.
+	talkSvc := newTalk(cfg, logger)
+	talkSvc.OnActive(notify.HoldOff)
+	talkDone := make(chan struct{})
+	go func() {
+		defer close(talkDone)
+		talkSvc.Run(ctx)
+	}()
+
 	// Recording and clips (ADR-0009), hooked into the monitor as well.
 	clipSvc, err := newClips(cfg, store, logger)
 	if err != nil {
@@ -182,6 +195,7 @@ func run() error {
 		stop()
 		<-monitorDone
 		<-clipsDone
+		<-talkDone
 	}()
 
 	srv := &http.Server{
@@ -195,6 +209,7 @@ func run() error {
 			Monitor: mon,
 			Alerts:  notify,
 			Clips:   clipSvc,
+			Talk:    talkSvc,
 			WebDir:  cfg.WebDir,
 			Auth:    auth,
 		}),
@@ -222,6 +237,31 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// newTalk builds the talk service. A missing ffplay switches talking off
+// instead of stopping the service: watching matters more.
+func newTalk(cfg config.Config, logger *slog.Logger) *talk.Service {
+	log := logger.With("component", "talk")
+	rules := talk.Settings{
+		Enabled:     cfg.Talk.Enabled,
+		IdleTimeout: 3 * time.Second,
+		MaxDuration: 2 * time.Minute,
+		// The detector needs sound.min_duration to open an event and the
+		// room echoes a little; hold notifications back a bit longer.
+		HoldOff: cfg.Sound.MinDuration + cfg.Sound.QuietTime + 5*time.Second,
+	}
+	if !cfg.Talk.Enabled {
+		logger.Info("talking disabled (talk.enabled: false)")
+		return talk.New(nil, rules, log)
+	}
+	bin, err := exec.LookPath(cfg.FFplayPath())
+	if err != nil {
+		logger.Warn("talking is off: ffplay not found (it comes with ffmpeg; set talk.ffplay_bin)", "tried", cfg.FFplayPath(), "err", err)
+		return talk.New(nil, rules, log)
+	}
+	logger.Info("talking on", "ffplay", bin, "volume", cfg.Talk.Volume)
+	return talk.New(ffplay.New(ffplay.Settings{Bin: bin, Volume: cfg.Talk.Volume}, log), rules, log)
 }
 
 // newClips builds the recording service. With recording.enabled: false it
