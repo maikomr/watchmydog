@@ -22,10 +22,12 @@ import (
 	"github.com/maikomr/watchmydog/internal/adapters/go2rtc"
 	"github.com/maikomr/watchmydog/internal/adapters/notify/webpush"
 	"github.com/maikomr/watchmydog/internal/adapters/power"
+	recorder "github.com/maikomr/watchmydog/internal/adapters/recorder/ffmpeg"
 	"github.com/maikomr/watchmydog/internal/adapters/sound/threshold"
 	"github.com/maikomr/watchmydog/internal/adapters/store/sqlite"
 	"github.com/maikomr/watchmydog/internal/app/alerts"
 	"github.com/maikomr/watchmydog/internal/app/cameras"
+	"github.com/maikomr/watchmydog/internal/app/clips"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
@@ -145,6 +147,19 @@ func run() error {
 	mon.OnEventStart(notify.EventStarted)
 	go notify.Run(ctx)
 
+	// Recording and clips (ADR-0009), hooked into the monitor as well.
+	clipSvc, err := newClips(cfg, store, logger)
+	if err != nil {
+		return err
+	}
+	mon.OnEventStart(clipSvc.EventStarted)
+	mon.OnEventEnd(clipSvc.EventEnded)
+	clipsDone := make(chan struct{})
+	go func() {
+		defer close(clipsDone)
+		clipSvc.Run(ctx, cams)
+	}()
+
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
@@ -161,10 +176,12 @@ func run() error {
 		mon.Run(ctx, detector, cams)
 	}()
 	// Runs before the engine is stopped and the database is closed (defers
-	// are last-in, first-out): stop listening and let an open event be saved.
+	// are last-in, first-out): stop listening, let an open event be saved
+	// and let the recorders and a clip being written finish.
 	defer func() {
 		stop()
 		<-monitorDone
+		<-clipsDone
 	}()
 
 	srv := &http.Server{
@@ -177,6 +194,7 @@ func run() error {
 			Engine:  engine,
 			Monitor: mon,
 			Alerts:  notify,
+			Clips:   clipSvc,
 			WebDir:  cfg.WebDir,
 			Auth:    auth,
 		}),
@@ -204,6 +222,46 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// newClips builds the recording service. With recording.enabled: false it
+// still exists, so clips made earlier can be played and deleted.
+func newClips(cfg config.Config, store ports.ClipStore, logger *slog.Logger) (*clips.Service, error) {
+	r := cfg.Recording
+	rules := clips.Settings{
+		Enabled:   r.Enabled,
+		PreRoll:   r.PreRoll,
+		PostRoll:  r.PostRoll,
+		MaxLength: r.MaxClip,
+		MaxBytes:  r.MaxDiskMB * 1_000_000,
+		KeepFor:   r.KeepFor,
+	}
+	switch {
+	case !r.Enabled:
+		logger.Info("recording disabled (recording.enabled: false)")
+	case !cfg.Sound.Enabled:
+		// Clips are made of noise events; without detection the camera
+		// would run around the clock for nothing.
+		rules.Enabled = false
+		logger.Warn("recording is off because sound detection is off (sound.enabled: false)")
+	default:
+		logger.Info("recording on", "pre_roll", r.PreRoll, "post_roll", r.PostRoll, "max_clip", r.MaxClip,
+			"max_disk_mb", r.MaxDiskMB, "keep_for", r.KeepFor, "dir", cfg.RecordingsDir())
+	}
+	ringLength := rules.RingLength()
+	if !rules.Enabled {
+		ringLength = time.Minute // unused, but the recorder wants a sane value
+	}
+	rec, err := recorder.New(recorder.Settings{
+		FFmpegBin:  cfg.Engine.FFmpegBin,
+		RTSPAddr:   cfg.Engine.RTSPAddr,
+		Dir:        cfg.RecordingsDir(),
+		RingLength: ringLength,
+	}, logger.With("component", "recorder"))
+	if err != nil {
+		return nil, err
+	}
+	return clips.New(rec, store, rules, logger.With("component", "clips")), nil
 }
 
 // newAlerts builds the notification service. With push.enabled: false it

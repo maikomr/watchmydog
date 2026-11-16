@@ -25,3 +25,6 @@ vapid*.json
 .DS_Store
 .idea/
 .vscode/
+
+# Browser test tool output (screenshots, console logs)
+/.playwright-mcp/

@@ -1,7 +1,8 @@
 // Live view UI: one camera, one <video>, status pill, controls. Pure DOM,
 // no framework; the player logic lives in ../player and is tested on its own.
 
-import { api, isUnauthorized, type Camera, type SoundEvent, type StreamVariant } from "../api";
+import { api, isUnauthorized, type Camera, type Clip, type SoundEvent, type StreamVariant } from "../api";
+import { describeClip, describeStorage, sameClips } from "../clips/format";
 import { describeAudioHealth } from "../player/audio-health";
 import { LivePlayer, type PlayerState, type PlayerStats } from "../player/player";
 import { browserPushEnv, describePush, PushControl, type PushStatus } from "../push/push";
@@ -14,6 +15,14 @@ const QUALITY_KEY = "wmd.quality";
 const CAMERA_POLL_MS = 10_000;
 /** How many events the list shows. */
 const EVENT_LIST_MAX = 20;
+/** How many clips the list shows. */
+const CLIP_LIST_MAX = 20;
+/**
+ * How often the clip list is reloaded while the app is visible. A clip
+ * appears up to half a minute after its noise ended, so there is no event
+ * to wait for.
+ */
+const CLIP_POLL_MS = 15_000;
 
 export interface AppHooks {
   /** The session is missing or expired: show the login screen. */
@@ -78,11 +87,19 @@ export class App {
   private pushStatus: PushStatus | null = null;
   private readonly eventsNote = el("p", { class: "muted events-note" }, "");
   private readonly eventList = el("ul", { class: "events" });
+  // Clips: recorded video around the noise events.
+  private readonly clipsNote = el("p", { class: "muted events-note" }, "");
+  private readonly clipList = el("ul", { class: "events clips" });
+  private clips: Clip[] | null = null;
+  /** The clip whose player is open, if any. */
+  private openClip: string | null = null;
+  private clipTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly onVisibility = () => {
     if (document.visibilityState === "visible") {
       this.player?.reconnectNow();
       this.sound?.start();
+      void this.loadClips();
     } else {
       // No point in ten readings a second for a screen nobody sees.
       this.sound?.stop();
@@ -111,6 +128,9 @@ export class App {
       el("h2", {}, "Noise events"),
       this.eventsNote,
       this.eventList,
+      el("h2", {}, "Clips"),
+      this.clipsNote,
+      this.clipList,
     );
     this.pushBtn.disabled = true;
     this.root.replaceChildren(header, this.stage, controls, this.stats, sound);
@@ -143,7 +163,8 @@ export class App {
     this.sound = null;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
-    this.pollTimer = this.retryTimer = null;
+    if (this.clipTimer !== null) clearInterval(this.clipTimer);
+    this.pollTimer = this.retryTimer = this.clipTimer = null;
     document.removeEventListener("visibilitychange", this.onVisibility);
   }
 
@@ -168,6 +189,8 @@ export class App {
       this.pollTimer = setInterval(() => void this.refreshCamera(), CAMERA_POLL_MS);
       this.startPlayer();
       this.startSound(camera);
+      void this.loadClips();
+      this.clipTimer = setInterval(() => void this.loadClips(), CLIP_POLL_MS);
     } catch (err) {
       if (this.handleAuthError(err) || this.destroyed) return;
       this.setPill(`server unreachable: ${(err as Error).message}`, "err");
@@ -328,6 +351,79 @@ export class App {
     if (this.events.length > 0) this.eventsNote.textContent = "";
     else if (this.eventsNote.dataset.disabled) this.eventsNote.textContent = "Noise detection is switched off.";
     else this.eventsNote.textContent = "No noise detected yet.";
+  }
+
+  // --- clips ---------------------------------------------------------------
+
+  private async loadClips(): Promise<void> {
+    if (!this.camera || this.destroyed || document.visibilityState !== "visible") return;
+    try {
+      const list = await api.clips(this.camera.id, CLIP_LIST_MAX);
+      if (this.destroyed) return;
+      this.clipsNote.textContent = describeStorage(list);
+      // Rebuilding the list would stop a clip that is playing, so only do
+      // it when the clips changed.
+      if (this.clips && sameClips(this.clips, list.clips)) return;
+      this.clips = list.clips;
+      this.renderClips();
+    } catch (err) {
+      if (!this.handleAuthError(err)) this.clipsNote.textContent = `Could not load clips: ${(err as Error).message}`;
+    }
+  }
+
+  private renderClips(): void {
+    const now = new Date();
+    const clips = this.clips ?? [];
+    if (!clips.some((c) => c.id === this.openClip)) this.openClip = null;
+    this.clipList.replaceChildren(...clips.map((c) => this.clipItem(c, now)));
+  }
+
+  private clipItem(c: Clip, now: Date): HTMLLIElement {
+    const open = c.id === this.openClip;
+    const play = el("button", { class: "btn small" }, open ? "Close" : "Play");
+    const save = el("a", { class: "btn small", href: `${c.videoUrl}?download=1`, download: "" }, "Save");
+    const del = el("button", { class: "btn small" }, "Delete");
+    play.addEventListener("click", () => {
+      this.openClip = open ? null : c.id;
+      this.renderClips();
+    });
+    del.addEventListener("click", () => void this.deleteClip(c, del));
+    const item = el(
+      "li",
+      {},
+      el(
+        "div",
+        { class: "clip-row" },
+        el("span", { class: "when" }, formatWhen(new Date(c.startedAt), now)),
+        el("span", { class: "what" }, describeClip(c)),
+      ),
+      el("div", { class: "clip-actions" }, play, save, del),
+    );
+    if (open) {
+      const video = el("video", { class: "clip-video", controls: "", playsinline: "", preload: "metadata", src: c.videoUrl });
+      // Two sound tracks at once are confusing: silence the live view
+      // while a clip plays ("Tap for sound" brings it back).
+      video.addEventListener("play", () => {
+        this.video.muted = true;
+      });
+      item.append(video);
+      void video.play().catch(() => undefined);
+    }
+    return item;
+  }
+
+  private async deleteClip(c: Clip, button: HTMLButtonElement): Promise<void> {
+    if (!confirm("Delete this clip? This cannot be undone.")) return;
+    button.disabled = true;
+    try {
+      await api.deleteClip(c.id);
+    } catch (err) {
+      if (this.handleAuthError(err) || this.destroyed) return;
+      // 404: someone else or the clean-up already deleted it; just reload.
+      this.clipsNote.textContent = `Could not delete the clip: ${(err as Error).message}`;
+    }
+    this.clips = null; // force a rebuild
+    await this.loadClips();
   }
 
   // --- notifications -------------------------------------------------------

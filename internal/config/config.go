@@ -24,7 +24,7 @@ import (
 type Config struct {
 	// ListenAddr is the host:port the HTTP API binds to.
 	ListenAddr string `yaml:"listen"`
-	// DataDir holds generated files and, later, recordings and the database.
+	// DataDir holds generated files, the database and the recordings.
 	DataDir string `yaml:"data_dir"`
 	// WebDir is the built web client to serve at "/". Empty disables it.
 	WebDir string `yaml:"web_dir"`
@@ -39,9 +39,37 @@ type Config struct {
 	Sound Sound `yaml:"sound"`
 	// Push configures notifications to the owner's devices.
 	Push Push `yaml:"push"`
+	// Recording configures the clips made of noise events.
+	Recording Recording `yaml:"recording"`
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
 }
+
+// Recording is the clips section (ADR-0009).
+type Recording struct {
+	// Enabled turns recording on. The camera then runs around the clock,
+	// because a clip can only begin before the noise if the past is
+	// already recorded.
+	Enabled bool `yaml:"enabled"`
+	// PreRoll is how long before a noise a clip begins.
+	PreRoll time.Duration `yaml:"pre_roll"`
+	// PostRoll is how long after the noise ended a clip goes on. A new
+	// noise within this time goes into the same clip.
+	PostRoll time.Duration `yaml:"post_roll"`
+	// MaxClip is the longest a single clip may be; a longer noise gets
+	// several clips.
+	MaxClip time.Duration `yaml:"max_clip"`
+	// MaxDiskMB is the most disk space all clips together may use, in
+	// megabytes (1 MB = 1,000,000 bytes). The oldest clips are deleted to
+	// stay below it.
+	MaxDiskMB int64 `yaml:"max_disk_mb"`
+	// KeepFor is how long a clip is kept. 0 keeps clips until max_disk_mb
+	// removes them.
+	KeepFor time.Duration `yaml:"keep_for"`
+}
+
+// RecordingsDir holds the recorder's ring and the clips.
+func (c Config) RecordingsDir() string { return filepath.Join(c.DataDir, "recordings") }
 
 // Push is the notification section (ADR-0008).
 type Push struct {
@@ -179,6 +207,14 @@ func Defaults() Config {
 			MinDuration:   time.Second,
 			QuietTime:     5 * time.Second,
 		},
+		Recording: Recording{
+			Enabled:   true,
+			PreRoll:   15 * time.Second,
+			PostRoll:  15 * time.Second,
+			MaxClip:   5 * time.Minute,
+			MaxDiskMB: 10_000,
+			KeepFor:   30 * 24 * time.Hour,
+		},
 		Push: Push{
 			Enabled:  true,
 			Cooldown: 5 * time.Minute,
@@ -305,6 +341,26 @@ func (c Config) Validate() error {
 		contact := strings.TrimPrefix(p.Contact, "mailto:")
 		if !strings.HasPrefix(contact, "https://") && !strings.Contains(contact, "@") {
 			errs = append(errs, errors.New("push.contact must be an email address or an https URL"))
+		}
+	}
+	if r := c.Recording; r.Enabled {
+		if r.PreRoll < 0 || r.PreRoll > time.Minute {
+			errs = append(errs, errors.New("recording.pre_roll must be between 0 and 1m"))
+		}
+		if r.PostRoll < 0 || r.PostRoll > time.Minute {
+			errs = append(errs, errors.New("recording.post_roll must be between 0 and 1m"))
+		}
+		if r.MaxClip < 30*time.Second || r.MaxClip > 30*time.Minute {
+			errs = append(errs, errors.New("recording.max_clip must be between 30s and 30m"))
+		} else if r.MaxClip <= r.PreRoll+r.PostRoll {
+			errs = append(errs, errors.New("recording.max_clip must be longer than pre_roll plus post_roll"))
+		}
+		// A five-minute clip is about 100 MB at the default bitrate.
+		if r.MaxDiskMB < 200 {
+			errs = append(errs, errors.New("recording.max_disk_mb must be at least 200"))
+		}
+		if r.KeepFor < 0 {
+			errs = append(errs, errors.New("recording.keep_for must not be negative (0 keeps clips until the disk limit)"))
 		}
 	}
 	seen := map[string]bool{}

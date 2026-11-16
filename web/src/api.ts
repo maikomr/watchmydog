@@ -53,6 +53,30 @@ export interface SoundEvent {
   peakDbfs: number;
 }
 
+/** A recorded piece of video around one or more noises (see docs/adr/0009). */
+export interface Clip {
+  id: string;
+  cameraId: string;
+  /** ISO 8601, UTC: the first picture of the clip. */
+  startedAt: string;
+  durationSeconds: number;
+  sizeBytes: number;
+  /** Plays the clip; with "?download=1" the browser saves it as a file. */
+  videoUrl: string;
+}
+
+export interface ClipList {
+  /** False when recording is switched off in the server's config. */
+  enabled: boolean;
+  /** Newest first. */
+  clips: Clip[];
+  /** Disk space of all clips, and the limit at which the oldest are deleted. */
+  usedBytes: number;
+  maxBytes: number;
+  /** How long a clip is kept; 0 = until the disk limit removes it. */
+  keepSeconds: number;
+}
+
 /** How this server sends notifications (see docs/adr/0008). */
 export interface PushConfig {
   /** False when notifications are switched off in the server's config. */
@@ -142,6 +166,11 @@ export const api = {
   /** Asks the server for a test notification to this device. */
   pushTest: async (endpoint: string) => {
     await request("/api/push/test", jsonPost({ endpoint }));
+  },
+  clips: (cameraId: string, limit: number) =>
+    getJSON<ClipList>(`/api/clips?camera=${encodeURIComponent(cameraId)}&limit=${limit}`),
+  deleteClip: async (id: string) => {
+    await request(`/api/clips/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   /** Newest first. */
   events: async (cameraId: string, limit: number) =>

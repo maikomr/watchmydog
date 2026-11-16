@@ -22,7 +22,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 6 | PWA + run at boot + keep the Mac awake | done |
 | 7 | Noise detection: live level meter, event history (ADR-0007) | done |
 | 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | done |
-| 9 | Recording and clips | |
+| 9 | Recording and clips: ring of the last minutes, a clip per noise with 15 s before and after (ADR-0009) | done |
 | 10 | Two-way audio | |
 | 11 | Camera PTZ controls | |
 | 12 | SaaS readiness | |
@@ -61,6 +61,12 @@ Noise detection (ADR-0007): the service listens to the microphone all the time (
 off while nobody watches), stores a "noise event" in `data/watchmydog.db` whenever it is loud for
 long enough, and streams the live level to the app. Tunables are in the `sound:` section of the
 config. API: `GET /api/events` (history) and `GET /api/events/stream` (server-sent events).
+
+Recording (ADR-0009): the service keeps the last minutes of video and audio on disk and saves a
+clip for every noise, starting 15 s before it. Because of that the camera runs all the time.
+Clips live in `data/recordings/clips`, are limited by `recording.max_disk_mb` and
+`recording.keep_for`, and are listed under "Clips" in the app. API: `GET /api/clips`,
+`GET /api/clips/{id}/video.mp4`, `DELETE /api/clips/{id}`.
 
 Web client (`web/`): a WHEP WebRTC player with tap-to-unmute, reconnect with backoff, a stall
 watchdog (reconnects when frames stop, e.g. after a go2rtc restart), fullscreen and a high/low

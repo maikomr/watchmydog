@@ -169,3 +169,25 @@ func TestOnEventStartIsCalledOncePerEventWithTheStoredEvent(t *testing.T) {
 		t.Errorf("hook got %+v, stored %+v", got[0], stored)
 	}
 }
+
+func TestOnEventEndIsCalledOncePerEventWithItsEnd(t *testing.T) {
+	s := newService(memory.New())
+	var started, ended []domain.Event
+	s.OnEventStart(func(e domain.Event) { started = append(started, e) })
+	s.OnEventEnd(func(e domain.Event) { ended = append(ended, e) })
+
+	s.SoundStarted(domain.SoundDetection{CameraID: "dog", StartedAt: t0, PeakDBFS: -20})
+	if len(ended) != 0 {
+		t.Fatal("end hook called at the start")
+	}
+	end := t0.Add(3 * time.Second)
+	s.SoundEnded(domain.SoundDetection{CameraID: "dog", StartedAt: t0, EndedAt: end, PeakDBFS: -10})
+
+	if len(ended) != 1 {
+		t.Fatalf("hook called %d times, want 1", len(ended))
+	}
+	e := ended[0]
+	if e.ID != started[0].ID || e.EndedAt == nil || !e.EndedAt.Equal(end) || e.PeakDBFS != -10 {
+		t.Errorf("hook got %+v", e)
+	}
+}

@@ -359,3 +359,56 @@ func TestPushValidation(t *testing.T) {
 		t.Errorf("disabled push section must not be validated: %v", err)
 	}
 }
+
+func TestRecordingDefaultsAndOverrides(t *testing.T) {
+	cfg, err := Load(nil, env(map[string]string{"WATCHMYDOG_SECRET": testSecret}), noFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Recording{
+		Enabled: true, PreRoll: 15 * time.Second, PostRoll: 15 * time.Second,
+		MaxClip: 5 * time.Minute, MaxDiskMB: 10000, KeepFor: 720 * time.Hour,
+	}
+	if cfg.Recording != want {
+		t.Errorf("defaults = %+v, want %+v", cfg.Recording, want)
+	}
+	if got := cfg.RecordingsDir(); got != "data/recordings" {
+		t.Errorf("RecordingsDir = %q", got)
+	}
+
+	yaml := "auth: {disabled: true}\nrecording:\n  pre_roll: 5s\n  max_clip: 2m\n  max_disk_mb: 500\n  keep_for: 0s\n"
+	cfg, err = Load([]string{"-config", "/etc/wmd.yaml"}, env(nil), files(map[string]string{"/etc/wmd.yaml": yaml}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Recording
+	if !r.Enabled || r.PreRoll != 5*time.Second || r.PostRoll != 15*time.Second || r.MaxClip != 2*time.Minute || r.MaxDiskMB != 500 || r.KeepFor != 0 {
+		t.Errorf("overrides = %+v", r)
+	}
+}
+
+func TestRecordingValidation(t *testing.T) {
+	for name, section := range map[string]string{
+		"pre_roll too long":        "pre_roll: 2m",
+		"negative post_roll":       "post_roll: -1s",
+		"max_clip too short":       "max_clip: 10s",
+		"max_clip too long":        "max_clip: 2h",
+		"max_clip not above rolls": "{pre_roll: 30s, post_roll: 30s, max_clip: 1m}",
+		"tiny disk":                "max_disk_mb: 10",
+		"negative keep_for":        "keep_for: -1h",
+	} {
+		yaml := "auth: {disabled: true}\nrecording:\n  " + section + "\n"
+		if strings.HasPrefix(section, "{") {
+			yaml = "auth: {disabled: true}\nrecording: " + section + "\n"
+		}
+		_, err := Load([]string{"-config", "/c.yaml"}, env(nil), files(map[string]string{"/c.yaml": yaml}))
+		if err == nil || !strings.Contains(err.Error(), "recording.") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// Switched off, the values are not checked.
+	yaml := "auth: {disabled: true}\nrecording: {enabled: false, max_disk_mb: 1}\n"
+	if _, err := Load([]string{"-config", "/c.yaml"}, env(nil), files(map[string]string{"/c.yaml": yaml})); err != nil {
+		t.Errorf("disabled recording: %v", err)
+	}
+}

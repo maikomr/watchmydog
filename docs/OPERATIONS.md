@@ -59,11 +59,43 @@ To tune, edit the `sound:` section of `deploy/watchmydog.local.yaml`, then `make
 Facts worth knowing:
 
 - Detection needs the stream: while the camera is released for OBS/Camo there is **no detection**.
-- The microphone is always on; the camera only while someone watches.
+- The microphone is always on. With recording on (the default) the camera is too; with
+  `recording.enabled: false` it runs only while someone watches.
 - Events live in `data/watchmydog.db` (SQLite). Look at them with
   `sqlite3 data/watchmydog.db "select datetime(started_at/1000,'unixepoch','localtime'), (ended_at-started_at)/1000.0, peak_dbfs from events order by started_at desc limit 20"`.
   Deleting the file while the service is stopped clears the history.
 - It reacts to loudness, not to what the sound is: a vacuum cleaner counts too.
+
+## Recording and clips
+
+Background: [ADR-0009](adr/0009-recording-and-clips.md).
+
+Every noise event gets a clip: video and sound from about 15 s before the noise until about 15 s
+after it. Clips are under "Clips" in the app (play, save to the phone, delete). A clip appears
+about half a minute after the noise ended.
+
+Settings, in the `recording:` section of `deploy/watchmydog.local.yaml`, then `make restart-agent`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | true | `false`: no recording, and the camera only runs while someone watches. Old clips stay playable |
+| `pre_roll` | 15s | How long before the noise a clip begins |
+| `post_roll` | 15s | How long after the noise it goes on. A new noise within this time goes into the same clip |
+| `max_clip` | 5m | Longest single clip. A longer noise gets several clips |
+| `max_disk_mb` | 10000 | Disk space for all clips. The oldest are deleted to stay below it. About 20 MB per minute of clip |
+| `keep_for` | 720h | Clips older than this are deleted. `0s`: only the disk limit deletes |
+
+Facts worth knowing:
+
+- **The camera runs around the clock** and its light stays on: the seconds before a noise can only
+  be in the clip if they were already recorded.
+- Files: `data/recordings/clips/<id>.mp4` (the clips) and `data/recordings/ring/` (the last
+  minutes, about 150 MB, rewritten all the time). Do not put files of your own there: at start,
+  clip files the service does not know are deleted.
+- A clip can be up to 10 s longer at each end than the settings say.
+- No recording while the camera is released for OBS/Camo.
+- `make logs` shows `clip saved` and `clip deleted` (with the reason).
+- Disk use: `du -sh data/recordings/*`.
 
 ## Notifications
 
@@ -126,6 +158,9 @@ as". The service works either way.
 | No notification although the event is in the list | `make logs`: `no notification` gives the reason (cooldown, quiet hours, no device). If it says `notification sent`: on the phone check Do Not Disturb, Settings > Apps > watchmydog (or Chrome) > Notifications, and that battery use is not "Restricted" |
 | "Send test" says the subscription has expired | Tap Turn off, then Turn on |
 | App says notifications are blocked | Chrome > site settings for the app's address > Notifications > Allow, then reopen the app |
+| A noise event has no clip | Wait half a minute. Then `make logs`: `no clip: nothing was recorded` (camera was released, or the service had just started) or `recording unavailable` |
+| Clips disappear | `make logs`: `clip deleted` gives the reason. Raise `recording.max_disk_mb` or `recording.keep_for` |
+| A clip does not play on a device | Clips are H.264 + Opus in MP4: use Chrome or Firefox. "Save" downloads the file |
 | Service crashed | Nothing to do: launchd restarts it (verified: healthy again about 1 s after a kill) |
 
 ## Log size

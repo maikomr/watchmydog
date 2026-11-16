@@ -42,6 +42,16 @@ sound:
   min_duration: 1s      # loud time needed before an event starts
   quiet_time: 5s        # quiet time that ends an event
 
+# Recording (ADR-0009): a clip for every noise event. Needs sound.enabled.
+# With recording on, the camera runs around the clock.
+recording:
+  enabled: true
+  pre_roll: 15s         # the clip begins this long before the noise
+  post_roll: 15s        # and ends this long after it; noises closer together share a clip
+  max_clip: 5m          # longest single clip; a longer noise gets several
+  max_disk_mb: 10000    # disk space for all clips; the oldest are deleted to stay below
+  keep_for: 720h        # delete clips older than this; 0s = only the disk limit deletes
+
 # Notifications to phones (ADR-0008, guide in docs/OPERATIONS.md). Each device
 # switches them on in the app. Restart the service after changing these.
 push:

@@ -1,12 +1,13 @@
 // Package storetest is the contract every ports.EventStore (Run),
-// ports.SubscriptionStore (RunSubscriptions) and ports.PauseStore
-// (RunPauses) must fulfil. Each
+// ports.SubscriptionStore (RunSubscriptions), ports.PauseStore (RunPauses)
+// and ports.ClipStore (RunClips) must fulfil. Each
 // adapter's test calls Run, so SQLite, the in-memory fake and any future
 // store (Postgres) are held to the same behaviour.
 package storetest
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -269,5 +270,85 @@ func RunPauses(t *testing.T, newStore func(t *testing.T) ports.PauseStore) {
 		set(t, s, "dog", false)
 		set(t, s, "never-paused", false)
 		check(t, s)
+	})
+}
+
+// RunClips exercises a fresh, empty clip store.
+func RunClips(t *testing.T, newStore func(t *testing.T) ports.ClipStore) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	clip := func(id string, cam domain.CameraID, age time.Duration) domain.Clip {
+		return domain.Clip{
+			ID: domain.ClipID(id), CameraID: cam, StartedAt: t0.Add(age),
+			Duration: 42500 * time.Millisecond, SizeBytes: 5_000_000_000, // more than 32 bits
+		}
+	}
+	fill := func(t *testing.T, s ports.ClipStore, clips ...domain.Clip) {
+		t.Helper()
+		for _, c := range clips {
+			if err := s.SaveClip(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	list := func(t *testing.T, s ports.ClipStore, cam domain.CameraID, limit int, want ...string) {
+		t.Helper()
+		got, err := s.ListClips(ctx, cam, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || len(got) != len(want) {
+			t.Fatalf("camera %q limit %d: got %+v, want %v (non-nil)", cam, limit, got, want)
+		}
+		for i := range want {
+			if string(got[i].ID) != want[i] {
+				t.Fatalf("camera %q limit %d: got %+v, want %v", cam, limit, got, want)
+			}
+		}
+	}
+
+	t.Run("empty store", func(t *testing.T) {
+		s := newStore(t)
+		list(t, s, "", 0)
+		if _, err := s.GetClip(ctx, "nope"); !errors.Is(err, ports.ErrClipNotFound) {
+			t.Errorf("err = %v, want ErrClipNotFound", err)
+		}
+	})
+
+	t.Run("save, get and list newest first", func(t *testing.T) {
+		s := newStore(t)
+		fill(t, s, clip("a", "dog", 0), clip("c", "dog", 2*time.Minute), clip("b", "cat", time.Minute))
+		got, err := s.GetClip(ctx, "a")
+		if err != nil || got != clip("a", "dog", 0) {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+		list(t, s, "", 0, "c", "b", "a")
+		list(t, s, "dog", 0, "c", "a")
+		list(t, s, "", 2, "c", "b")
+		list(t, s, "bird", 0)
+	})
+
+	t.Run("saving the same id replaces", func(t *testing.T) {
+		s := newStore(t)
+		fill(t, s, clip("a", "dog", 0))
+		changed := clip("a", "dog", time.Hour)
+		changed.SizeBytes = 7
+		fill(t, s, changed)
+		list(t, s, "", 0, "a")
+		if got, _ := s.GetClip(ctx, "a"); got != changed {
+			t.Errorf("got %+v, want %+v", got, changed)
+		}
+	})
+
+	t.Run("delete removes only that clip; unknown is fine", func(t *testing.T) {
+		s := newStore(t)
+		fill(t, s, clip("a", "dog", 0), clip("b", "dog", time.Minute))
+		if err := s.DeleteClip(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteClip(ctx, "never-seen"); err != nil {
+			t.Errorf("deleting an unknown clip: %v", err)
+		}
+		list(t, s, "", 0, "b")
 	})
 }

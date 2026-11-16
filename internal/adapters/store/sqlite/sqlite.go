@@ -1,5 +1,5 @@
-// Package sqlite is a ports.EventStore, ports.SubscriptionStore and
-// ports.PauseStore backed by one SQLite file.
+// Package sqlite is a ports.EventStore, ports.SubscriptionStore,
+// ports.PauseStore and ports.ClipStore backed by one SQLite file.
 //
 // It uses modernc.org/sqlite, a pure-Go build of SQLite: no C compiler is
 // needed and the service stays a single binary (ADR-0007).
@@ -8,6 +8,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -50,10 +51,20 @@ var migrations = []string{
 		camera_id TEXT PRIMARY KEY,
 		paused_at INTEGER NOT NULL
 	) STRICT;`,
+	// Recorded clips (ADR-0009). The video is a file next to the database;
+	// this is the list. duration_ms and size_bytes describe that file.
+	`CREATE TABLE clips (
+		id          TEXT PRIMARY KEY,
+		camera_id   TEXT NOT NULL,
+		started_at  INTEGER NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		size_bytes  INTEGER NOT NULL
+	) STRICT;
+	CREATE INDEX clips_by_start ON clips (started_at);`,
 }
 
-// Store implements ports.EventStore, ports.SubscriptionStore and
-// ports.PauseStore.
+// Store implements ports.EventStore, ports.SubscriptionStore,
+// ports.PauseStore and ports.ClipStore.
 type Store struct {
 	db *sql.DB
 }
@@ -62,6 +73,7 @@ var (
 	_ ports.EventStore        = (*Store)(nil)
 	_ ports.SubscriptionStore = (*Store)(nil)
 	_ ports.PauseStore        = (*Store)(nil)
+	_ ports.ClipStore         = (*Store)(nil)
 )
 
 // Open opens (creating if needed) the database file and brings its schema
@@ -282,6 +294,86 @@ func (s *Store) PausedCameras(ctx context.Context) ([]domain.CameraID, error) {
 		out = append(out, domain.CameraID(id))
 	}
 	return out, rows.Err()
+}
+
+// SaveClip implements ports.ClipStore.
+func (s *Store) SaveClip(ctx context.Context, c domain.Clip) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO clips (id, camera_id, started_at, duration_ms, size_bytes)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET
+			camera_id = excluded.camera_id, started_at = excluded.started_at,
+			duration_ms = excluded.duration_ms, size_bytes = excluded.size_bytes`,
+		string(c.ID), string(c.CameraID), c.StartedAt.UnixMilli(), c.Duration.Milliseconds(), c.SizeBytes)
+	if err != nil {
+		return fmt.Errorf("save clip: %w", err)
+	}
+	return nil
+}
+
+const clipColumns = "id, camera_id, started_at, duration_ms, size_bytes"
+
+func scanClip(row interface{ Scan(...any) error }) (domain.Clip, error) {
+	var (
+		c           domain.Clip
+		id, cam     string
+		started, ms int64
+	)
+	if err := row.Scan(&id, &cam, &started, &ms, &c.SizeBytes); err != nil {
+		return domain.Clip{}, err
+	}
+	c.ID, c.CameraID = domain.ClipID(id), domain.CameraID(cam)
+	c.StartedAt = time.UnixMilli(started).UTC()
+	c.Duration = time.Duration(ms) * time.Millisecond
+	return c, nil
+}
+
+// GetClip implements ports.ClipStore.
+func (s *Store) GetClip(ctx context.Context, id domain.ClipID) (domain.Clip, error) {
+	c, err := scanClip(s.db.QueryRowContext(ctx, "SELECT "+clipColumns+" FROM clips WHERE id = ?", string(id)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Clip{}, ports.ErrClipNotFound
+	}
+	if err != nil {
+		return domain.Clip{}, fmt.Errorf("get clip: %w", err)
+	}
+	return c, nil
+}
+
+// ListClips implements ports.ClipStore.
+func (s *Store) ListClips(ctx context.Context, cam domain.CameraID, limit int) ([]domain.Clip, error) {
+	query, args := "SELECT "+clipColumns+" FROM clips", []any{}
+	if cam != "" {
+		query += " WHERE camera_id = ?"
+		args = append(args, string(cam))
+	}
+	query += " ORDER BY started_at DESC, id"
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list clips: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.Clip{}
+	for rows.Next() {
+		c, err := scanClip(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list clips: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteClip implements ports.ClipStore.
+func (s *Store) DeleteClip(ctx context.Context, id domain.ClipID) error {
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM clips WHERE id = ?", string(id)); err != nil {
+		return fmt.Errorf("delete clip: %w", err)
+	}
+	return nil
 }
 
 // Close implements ports.EventStore.

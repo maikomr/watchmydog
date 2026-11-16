@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/maikomr/watchmydog/internal/app/alerts"
+	"github.com/maikomr/watchmydog/internal/app/clips"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/domain"
 	"github.com/maikomr/watchmydog/internal/ports"
@@ -42,6 +43,8 @@ type Deps struct {
 	// Alerts manages notification subscriptions. Nil disables the
 	// /api/push routes.
 	Alerts *alerts.Service
+	// Clips manages recorded clips. Nil disables the /api/clips routes.
+	Clips *clips.Service
 	// Auth verifies logins and sessions. Nil disables authentication.
 	Auth ports.Authenticator
 	// LoginMaxFailures and LoginWindow tune login rate limiting
@@ -91,6 +94,11 @@ func NewHandler(d Deps) http.Handler {
 		mux.Handle("POST /api/push/subscribe", d.protect(http.HandlerFunc(d.handlePushSubscribe)))
 		mux.Handle("POST /api/push/unsubscribe", d.protect(http.HandlerFunc(d.handlePushUnsubscribe)))
 		mux.Handle("POST /api/push/test", d.protect(http.HandlerFunc(d.handlePushTest)))
+	}
+	if d.Clips != nil {
+		mux.Handle("GET /api/clips", d.protect(http.HandlerFunc(d.handleListClips)))
+		mux.Handle("GET /api/clips/{id}/video.mp4", d.protect(http.HandlerFunc(d.handleClipVideo)))
+		mux.Handle("DELETE /api/clips/{id}", d.protect(http.HandlerFunc(d.handleDeleteClip)))
 	}
 	if d.Engine != nil {
 		// Player endpoints of the engine, e.g. /media/api/webrtc?src=dog.

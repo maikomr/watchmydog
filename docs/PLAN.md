@@ -159,6 +159,13 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** phone locked, Wi‑Fi off; trigger noise → notification arrives; tapping it opens the live view already playing.
 
 ### 9. Recording and clips
+
+> Outcome note (2026-11-16): built with these differences, reasons in ADR-0009. Segments are 10 s,
+> not 60 s, and the ring is only as long as the longest clip needs (about 7 min), not hours. A clip
+> is whole segments joined, so it can start up to 10 s earlier and end up to 10 s later than asked.
+> Noises close together share one clip; a clip is at most `max_clip` long. Limits are disk space
+> (`max_disk_mb`) and age (`keep_for`). The client has a "Clips" section on the one page instead of
+> a tab, with play, save and delete. Consequence to know: the camera now runs around the clock.
 - `Recorder` port; `ffmpeg` adapter: continuous ring buffer from RTSP (`-c copy -f segment`, 60 s segments, retention N hours) plus event clips assembled from ring segments (pre-roll 15 s, post-roll until quiet + 15 s). `Clip` rows in SQLite; `/api/clips`, `/api/clips/{id}/video.mp4` (range requests).
 - Client: clips tab, play inline, delete.
 - **Verify:** trigger noise → clip appears listing start time and duration, playback shows the ~15 s before the noise; disk usage stays below the configured cap after 24 h.

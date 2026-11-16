@@ -48,6 +48,8 @@ type Service struct {
 	newID  func() domain.EventID
 	// onStart is set before Run and read-only afterwards.
 	onStart []func(domain.Event)
+	// onEnd likewise.
+	onEnd []func(domain.Event)
 
 	mu   sync.Mutex
 	open map[domain.CameraID]domain.Event
@@ -72,6 +74,10 @@ func New(store ports.EventStore, info Info, logger *slog.Logger) *Service {
 // notification service hooks in here). Register before Run. fn is called
 // on the detector's goroutine and must return quickly.
 func (s *Service) OnEventStart(fn func(domain.Event)) { s.onStart = append(s.onStart, fn) }
+
+// OnEventEnd registers fn to be called for every event that ends, with its
+// end set (the clip service hooks in here). Same rules as OnEventStart.
+func (s *Service) OnEventEnd(fn func(domain.Event)) { s.onEnd = append(s.onEnd, fn) }
 
 // Run watches every camera that has audio and blocks until ctx is done and
 // all detectors have stopped.
@@ -186,6 +192,9 @@ func (s *Service) SoundEnded(d domain.SoundDetection) {
 
 	s.logger.Info("sound event ended", "camera", e.CameraID, "event", e.ID,
 		"duration", end.Sub(e.StartedAt).Round(100*time.Millisecond), "peak_dbfs", round1(e.PeakDBFS))
+	for _, fn := range s.onEnd {
+		fn(e)
+	}
 	s.save(e)
 }
 

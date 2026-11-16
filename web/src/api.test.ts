@@ -89,4 +89,19 @@ describe("api", () => {
     stubFetch(502, { error: "webpush: push service answered 403 Forbidden" });
     await expect(api.pushTest("https://push.example/x")).rejects.toMatchObject({ status: 502, message: /403/ });
   });
+
+  it("lists clips of a camera and deletes one", async () => {
+    const list = { enabled: true, clips: [], usedBytes: 0, maxBytes: 1, keepSeconds: 0 };
+    let calls = stubFetch(200, list);
+    expect(await api.clips("dog cam", 20)).toEqual(list);
+    expect(calls[0].url).toBe("/api/clips?camera=dog%20cam&limit=20");
+
+    calls = stubFetch(204);
+    await api.deleteClip("abc");
+    expect(calls[0].url).toBe("/api/clips/abc");
+    expect(calls[0].init?.method).toBe("DELETE");
+
+    stubFetch(404, { error: "clip not found" });
+    await expect(api.deleteClip("abc")).rejects.toThrow("clip not found");
+  });
 });

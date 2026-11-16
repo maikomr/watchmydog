@@ -1,5 +1,5 @@
-// Package memory is a ports.EventStore, ports.SubscriptionStore and
-// ports.PauseStore that keeps everything in RAM. It is the fake used by
+// Package memory is a ports.EventStore, ports.SubscriptionStore,
+// ports.PauseStore and ports.ClipStore that keeps everything in RAM. It is the fake used by
 // tests of everything above the store; nothing survives a restart.
 package memory
 
@@ -12,15 +12,16 @@ import (
 	"github.com/maikomr/watchmydog/internal/ports"
 )
 
-// Store implements ports.EventStore, ports.SubscriptionStore and
-// ports.PauseStore.
+// Store implements ports.EventStore, ports.SubscriptionStore,
+// ports.PauseStore and ports.ClipStore.
 type Store struct {
 	mu     sync.Mutex
 	events map[domain.EventID]domain.Event
 	subs   []domain.PushSubscription // oldest first
 	paused map[domain.CameraID]bool
+	clips  map[domain.ClipID]domain.Clip
 	// FailWith, when set, is returned by SaveEvent and by every
-	// subscription and pause method (to test error paths).
+	// subscription, pause and clip method (to test error paths).
 	FailWith error
 }
 
@@ -28,11 +29,77 @@ var (
 	_ ports.EventStore        = (*Store)(nil)
 	_ ports.SubscriptionStore = (*Store)(nil)
 	_ ports.PauseStore        = (*Store)(nil)
+	_ ports.ClipStore         = (*Store)(nil)
 )
 
 // New returns an empty store.
 func New() *Store {
-	return &Store{events: map[domain.EventID]domain.Event{}, paused: map[domain.CameraID]bool{}}
+	return &Store{
+		events: map[domain.EventID]domain.Event{},
+		paused: map[domain.CameraID]bool{},
+		clips:  map[domain.ClipID]domain.Clip{},
+	}
+}
+
+// SaveClip implements ports.ClipStore.
+func (s *Store) SaveClip(_ context.Context, c domain.Clip) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return s.FailWith
+	}
+	s.clips[c.ID] = c
+	return nil
+}
+
+// GetClip implements ports.ClipStore.
+func (s *Store) GetClip(_ context.Context, id domain.ClipID) (domain.Clip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return domain.Clip{}, s.FailWith
+	}
+	c, ok := s.clips[id]
+	if !ok {
+		return domain.Clip{}, ports.ErrClipNotFound
+	}
+	return c, nil
+}
+
+// ListClips implements ports.ClipStore.
+func (s *Store) ListClips(_ context.Context, cam domain.CameraID, limit int) ([]domain.Clip, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return nil, s.FailWith
+	}
+	out := []domain.Clip{}
+	for _, c := range s.clips {
+		if cam == "" || c.CameraID == cam {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.After(out[j].StartedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// DeleteClip implements ports.ClipStore.
+func (s *Store) DeleteClip(_ context.Context, id domain.ClipID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return s.FailWith
+	}
+	delete(s.clips, id)
+	return nil
 }
 
 // SetPaused implements ports.PauseStore.

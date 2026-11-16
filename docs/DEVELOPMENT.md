@@ -32,7 +32,8 @@ Commit per increment (or per meaningful step inside one) with a message of the f
 - `internal/adapters/<port>/<impl>` – one package per concrete implementation.
 - `internal/app/<service>` – application services that connect ports (`monitor`: detector →
   events → store and live subscribers; `alerts`: event → rules → notifier for every subscribed
-  device). No I/O of their own; tested with fakes.
+  device; `clips`: events → which part of the recording becomes a clip, and how long clips are
+  kept; `cameras`: remembers released cameras). No I/O of their own; tested with fakes.
 - `internal/httpapi` – HTTP handlers; translate requests into port and service calls, no business rules.
 - `cmd/watchmydog` – wiring and process lifecycle only.
 

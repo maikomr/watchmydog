@@ -56,7 +56,9 @@ func newAuthFixture(t *testing.T) *authFixture {
 	clock := &testClock{t: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)}
 	eng := newEngine()
 	logs := &bytes.Buffer{}
+	clipSvc, _ := newClips(t, clipRules)
 	h := NewHandler(Deps{
+		Clips:            clipSvc,
 		Logger:           slog.New(slog.NewTextHandler(logs, nil)),
 		Now:              clock.now,
 		Cameras:          []domain.Camera{dog()},
@@ -106,6 +108,9 @@ func TestProtectedRoutesRequireSession(t *testing.T) {
 		{http.MethodPost, "/api/push/subscribe"},
 		{http.MethodPost, "/api/push/unsubscribe"},
 		{http.MethodPost, "/api/push/test"},
+		{http.MethodGet, "/api/clips"},
+		{http.MethodGet, "/api/clips/0123456789abcdef0123456789abcdef/video.mp4"},
+		{http.MethodDelete, "/api/clips/0123456789abcdef0123456789abcdef"},
 		{http.MethodGet, "/media/api/webrtc?src=dog"},
 		{http.MethodPost, "/media/api/webrtc?src=dog"},
 	} {

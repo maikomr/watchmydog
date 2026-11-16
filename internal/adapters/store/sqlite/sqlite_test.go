@@ -33,6 +33,12 @@ func TestSubscriptionContract(t *testing.T) {
 	})
 }
 
+func TestClipContract(t *testing.T) {
+	storetest.RunClips(t, func(t *testing.T) ports.ClipStore {
+		return open(t, filepath.Join(t.TempDir(), "test.db"))
+	})
+}
+
 func TestPauseContract(t *testing.T) {
 	storetest.RunPauses(t, func(t *testing.T) ports.PauseStore {
 		return open(t, filepath.Join(t.TempDir(), "test.db"))
