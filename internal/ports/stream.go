@@ -16,8 +16,10 @@ import (
 // deployment would implement the same interface over a remote SFU.
 type StreamEngine interface {
 	// Start launches the engine with the given cameras and blocks until it is
-	// accepting requests or ctx is done.
-	Start(ctx context.Context, cameras []domain.Camera) error
+	// accepting requests or ctx is done. The cameras listed in paused start
+	// paused: their capture devices are never opened. IDs in paused that are
+	// not in cameras are ignored.
+	Start(ctx context.Context, cameras []domain.Camera, paused []domain.CameraID) error
 	// Stop shuts the engine down and releases all capture devices.
 	Stop(ctx context.Context) error
 	// Healthy returns nil when the engine answers requests.
@@ -33,6 +35,16 @@ type StreamEngine interface {
 	// MSE, MP4) to be mounted under a path prefix by the HTTP layer. The
 	// handler receives paths relative to the engine root (prefix stripped).
 	MediaHandler() http.Handler
+}
+
+// PauseStore remembers which cameras the owner paused, so that a restart of
+// the service does not take a released camera back.
+type PauseStore interface {
+	// SetPaused records that the camera is paused (true) or not (false).
+	// Repeating a call is not an error.
+	SetPaused(ctx context.Context, id domain.CameraID, paused bool) error
+	// PausedCameras returns the paused cameras, sorted by ID.
+	PausedCameras(ctx context.Context) ([]domain.CameraID, error)
 }
 
 // ErrUnknownCamera is returned for IDs that are not configured.

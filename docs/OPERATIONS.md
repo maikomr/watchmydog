@@ -21,7 +21,7 @@ the health endpoint, HTTPS on the tailnet and the secret file, and prints how to
 | Follow the log | `make logs` (file: `~/Library/Logs/watchmydog/watchmydog.log`) |
 | Restart | `make restart-agent` |
 | Stop and remove from login | `make uninstall-agent` |
-| Release the camera for OBS/Camo | "Release camera" button in the app |
+| Release the camera for OBS/Camo | "Release camera" button in the app. It stays released until "Resume camera" is tapped, also across restarts of the service or the Mac |
 
 The agent starts at login and restarts the service if it exits for any reason.
 
@@ -117,7 +117,7 @@ as". The service works either way.
 |---|---|
 | App says "Server unreachable" | Phone: Tailscale on? Mac: awake and logged in? `make doctor` |
 | Connects but video is black or there is no sound | `make logs`: look for `camera permission`. Then System Settings > Privacy & Security > Camera / Microphone: WatchMyDog must be on |
-| "Camera released for other apps" | Someone tapped Release: tap "Resume camera" |
+| "Camera released for other apps" | Someone tapped Release: tap "Resume camera". A restart does not resume it (`make logs` shows `cameras stay released from before the restart`) |
 | Login always says wrong secret | `cat data/secret` on the Mac; rotate: delete it, `make secret`, `make restart-agent` (logs out all devices) |
 | Too many attempts | Wait the shown minutes, or `make restart-agent` to clear the lockout |
 | Sound meter shows "–" | No audio is reaching the detector: camera released, or `make logs` shows `audio unavailable` |

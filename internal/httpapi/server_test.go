@@ -26,9 +26,11 @@ type fakeEngine struct {
 	failWith error
 }
 
-func (f *fakeEngine) Start(context.Context, []domain.Camera) error { return nil }
-func (f *fakeEngine) Stop(context.Context) error                   { return nil }
-func (f *fakeEngine) Healthy(context.Context) error                { return f.healthy }
+func (f *fakeEngine) Start(context.Context, []domain.Camera, []domain.CameraID) error {
+	return nil
+}
+func (f *fakeEngine) Stop(context.Context) error    { return nil }
+func (f *fakeEngine) Healthy(context.Context) error { return f.healthy }
 func (f *fakeEngine) Status(_ context.Context, id domain.CameraID) (domain.StreamStatus, error) {
 	st, ok := f.statuses[id]
 	if !ok {

@@ -38,6 +38,25 @@ deterministically. A restart takes a fraction of a second, kills every capture p
 web client reconnects on its own. This is acceptable for a single-site edge node; a multi-camera
 cloud deployment would revisit it.
 
+## Amendment 2026-11-16: a released camera stays released across restarts
+
+The paused state lived only in the engine's memory. Any restart of the service (crash, reboot,
+`make install-agent`) started every camera again and took the device back from the program the
+owner had released it for.
+
+- New port `PauseStore` (`SetPaused`, `PausedCameras`), implemented by the SQLite store
+  (migration 3, table `paused_cameras`) and the in-memory fake, with a shared contract test.
+- `StreamEngine.Start` takes the list of cameras that start paused. go2rtc's first config leaves
+  them out, so the device is not opened even for a moment.
+- `internal/app/cameras` wraps the engine: it reads the list at start and writes every pause and
+  resume. The HTTP layer is unchanged.
+- Order of the two steps: a pause is stored **before** the engine acts, a resume is removed from
+  the store **after** the engine acted. If the service dies in between, the camera ends up
+  released, never taken back.
+- If the list cannot be read at start, the service does not start (launchd retries). Starting
+  with all cameras could interrupt the owner's call.
+- The database is now opened before the media engine and closed after it.
+
 ## Amendment 2026-11-16: Opus error correction tried and withdrawn
 
 Short audio cuts were reported on mobile data. Opus in-band error correction (FEC) was tried by

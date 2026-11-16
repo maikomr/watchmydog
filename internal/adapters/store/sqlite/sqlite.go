@@ -1,5 +1,5 @@
-// Package sqlite is a ports.EventStore and ports.SubscriptionStore backed by
-// one SQLite file.
+// Package sqlite is a ports.EventStore, ports.SubscriptionStore and
+// ports.PauseStore backed by one SQLite file.
 //
 // It uses modernc.org/sqlite, a pure-Go build of SQLite: no C compiler is
 // needed and the service stays a single binary (ADR-0007).
@@ -44,9 +44,16 @@ var migrations = []string{
 		auth       TEXT NOT NULL,
 		created_at INTEGER NOT NULL
 	) STRICT;`,
+	// Cameras the owner paused ("released"). A row means paused; resuming
+	// deletes it. Kept so a restart does not take the camera back.
+	`CREATE TABLE paused_cameras (
+		camera_id TEXT PRIMARY KEY,
+		paused_at INTEGER NOT NULL
+	) STRICT;`,
 }
 
-// Store implements ports.EventStore and ports.SubscriptionStore.
+// Store implements ports.EventStore, ports.SubscriptionStore and
+// ports.PauseStore.
 type Store struct {
 	db *sql.DB
 }
@@ -54,6 +61,7 @@ type Store struct {
 var (
 	_ ports.EventStore        = (*Store)(nil)
 	_ ports.SubscriptionStore = (*Store)(nil)
+	_ ports.PauseStore        = (*Store)(nil)
 )
 
 // Open opens (creating if needed) the database file and brings its schema
@@ -238,6 +246,40 @@ func (s *Store) ListSubscriptions(ctx context.Context) ([]domain.PushSubscriptio
 		}
 		sub.CreatedAt = time.UnixMilli(created).UTC()
 		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+// SetPaused implements ports.PauseStore.
+func (s *Store) SetPaused(ctx context.Context, id domain.CameraID, paused bool) error {
+	var err error
+	if paused {
+		_, err = s.db.ExecContext(ctx,
+			"INSERT INTO paused_cameras (camera_id, paused_at) VALUES (?, ?) ON CONFLICT (camera_id) DO NOTHING",
+			string(id), time.Now().UnixMilli())
+	} else {
+		_, err = s.db.ExecContext(ctx, "DELETE FROM paused_cameras WHERE camera_id = ?", string(id))
+	}
+	if err != nil {
+		return fmt.Errorf("set paused: %w", err)
+	}
+	return nil
+}
+
+// PausedCameras implements ports.PauseStore.
+func (s *Store) PausedCameras(ctx context.Context) ([]domain.CameraID, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT camera_id FROM paused_cameras ORDER BY camera_id")
+	if err != nil {
+		return nil, fmt.Errorf("paused cameras: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.CameraID{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("paused cameras: %w", err)
+		}
+		out = append(out, domain.CameraID(id))
 	}
 	return out, rows.Err()
 }

@@ -1,7 +1,6 @@
-// Package memory is a ports.EventStore and ports.SubscriptionStore that
-// keeps everything in RAM. It is the
-// fake used by tests of everything above the store; nothing survives a
-// restart.
+// Package memory is a ports.EventStore, ports.SubscriptionStore and
+// ports.PauseStore that keeps everything in RAM. It is the fake used by
+// tests of everything above the store; nothing survives a restart.
 package memory
 
 import (
@@ -13,23 +12,58 @@ import (
 	"github.com/maikomr/watchmydog/internal/ports"
 )
 
-// Store implements ports.EventStore and ports.SubscriptionStore.
+// Store implements ports.EventStore, ports.SubscriptionStore and
+// ports.PauseStore.
 type Store struct {
 	mu     sync.Mutex
 	events map[domain.EventID]domain.Event
 	subs   []domain.PushSubscription // oldest first
+	paused map[domain.CameraID]bool
 	// FailWith, when set, is returned by SaveEvent and by every
-	// subscription method (to test error paths).
+	// subscription and pause method (to test error paths).
 	FailWith error
 }
 
 var (
 	_ ports.EventStore        = (*Store)(nil)
 	_ ports.SubscriptionStore = (*Store)(nil)
+	_ ports.PauseStore        = (*Store)(nil)
 )
 
 // New returns an empty store.
-func New() *Store { return &Store{events: map[domain.EventID]domain.Event{}} }
+func New() *Store {
+	return &Store{events: map[domain.EventID]domain.Event{}, paused: map[domain.CameraID]bool{}}
+}
+
+// SetPaused implements ports.PauseStore.
+func (s *Store) SetPaused(_ context.Context, id domain.CameraID, paused bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return s.FailWith
+	}
+	if paused {
+		s.paused[id] = true
+	} else {
+		delete(s.paused, id)
+	}
+	return nil
+}
+
+// PausedCameras implements ports.PauseStore.
+func (s *Store) PausedCameras(context.Context) ([]domain.CameraID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FailWith != nil {
+		return nil, s.FailWith
+	}
+	out := make([]domain.CameraID, 0, len(s.paused))
+	for id := range s.paused {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
 
 // SaveSubscription implements ports.SubscriptionStore.
 func (s *Store) SaveSubscription(_ context.Context, sub domain.PushSubscription) error {

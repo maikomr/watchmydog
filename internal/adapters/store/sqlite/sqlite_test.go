@@ -33,6 +33,26 @@ func TestSubscriptionContract(t *testing.T) {
 	})
 }
 
+func TestPauseContract(t *testing.T) {
+	storetest.RunPauses(t, func(t *testing.T) ports.PauseStore {
+		return open(t, filepath.Join(t.TempDir(), "test.db"))
+	})
+}
+
+func TestPausedCamerasSurviveReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "wmd.db")
+	s := open(t, path)
+	if err := s.SetPaused(ctx, "dog", true); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	got, err := open(t, path).PausedCameras(ctx)
+	if err != nil || len(got) != 1 || got[0] != "dog" {
+		t.Fatalf("after reopen: %v, %v", got, err)
+	}
+}
+
 func TestEventsSurviveReopenAndMigrationsRunOnce(t *testing.T) {
 	ctx := context.Background()
 	// A directory with a space and a "?" checks the path is escaped in the DSN.

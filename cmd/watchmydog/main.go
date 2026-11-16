@@ -25,6 +25,7 @@ import (
 	"github.com/maikomr/watchmydog/internal/adapters/sound/threshold"
 	"github.com/maikomr/watchmydog/internal/adapters/store/sqlite"
 	"github.com/maikomr/watchmydog/internal/app/alerts"
+	"github.com/maikomr/watchmydog/internal/app/cameras"
 	"github.com/maikomr/watchmydog/internal/app/monitor"
 	"github.com/maikomr/watchmydog/internal/buildinfo"
 	"github.com/maikomr/watchmydog/internal/config"
@@ -82,8 +83,21 @@ func run() error {
 		}
 	}
 
+	// The database is opened before the media engine: it knows which
+	// cameras the owner released, and those must not be opened at start.
+	// Closed last, after the monitor has saved an open event (see below).
+	store, err := sqlite.Open(ctx, cfg.DBPath())
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("close database", "err", err)
+		}
+	}()
+
 	// Media engine: supervised go2rtc process.
-	engine := go2rtc.New(go2rtc.Settings{
+	engine := cameras.Remember(go2rtc.New(go2rtc.Settings{
 		Bin:        cfg.Engine.Bin,
 		APIAddr:    cfg.Engine.APIAddr,
 		RTSPAddr:   cfg.Engine.RTSPAddr,
@@ -91,9 +105,9 @@ func run() error {
 		FFmpegBin:  cfg.Engine.FFmpegBin,
 		CaptureBin: cfg.Engine.CaptureBin,
 		LogLevel:   cfg.Engine.LogLevel,
-	}, cfg.DataDir, logger.With("component", "engine"))
-	cameras := cfg.DomainCameras()
-	if err := engine.Start(ctx, cameras); err != nil {
+	}, cfg.DataDir, logger.With("component", "engine")), store, logger.With("component", "cameras"))
+	cams := cfg.DomainCameras()
+	if err := engine.Start(ctx, cams, nil); err != nil {
 		return fmt.Errorf("start media engine: %w", err)
 	}
 	defer func() {
@@ -103,13 +117,9 @@ func run() error {
 			logger.Error("stop media engine", "err", err)
 		}
 	}()
-	logger.Info("media engine ready", "cameras", len(cameras))
+	logger.Info("media engine ready", "cameras", len(cams))
 
 	// Event history and sound monitoring (ADR-0007).
-	store, err := sqlite.Open(ctx, cfg.DBPath())
-	if err != nil {
-		return fmt.Errorf("event store: %w", err)
-	}
 	if n, err := store.CloseOpenEvents(ctx); err != nil {
 		logger.Error("could not close events left open by the last run", "err", err)
 	} else if n > 0 {
@@ -128,7 +138,7 @@ func run() error {
 	}, logger.With("component", "monitor"))
 
 	// Notifications (ADR-0008). Hooked into the monitor before it runs.
-	notify, err := newAlerts(cfg, store, cameras, logger)
+	notify, err := newAlerts(cfg, store, cams, logger)
 	if err != nil {
 		return err
 	}
@@ -148,16 +158,13 @@ func run() error {
 			FFmpegBin: cfg.Engine.FFmpegBin,
 			RTSPAddr:  cfg.Engine.RTSPAddr,
 		}, rules, logger.With("component", "sound"))
-		mon.Run(ctx, detector, cameras)
+		mon.Run(ctx, detector, cams)
 	}()
-	// Runs before the engine is stopped (defers are last-in, first-out):
-	// stop listening, let an open event be saved, then close the database.
+	// Runs before the engine is stopped and the database is closed (defers
+	// are last-in, first-out): stop listening and let an open event be saved.
 	defer func() {
 		stop()
 		<-monitorDone
-		if err := store.Close(); err != nil {
-			logger.Error("close event store", "err", err)
-		}
 	}()
 
 	srv := &http.Server{
@@ -166,7 +173,7 @@ func run() error {
 			Version: buildinfo.Version,
 			Commit:  buildinfo.Commit,
 			Logger:  logger,
-			Cameras: cameras,
+			Cameras: cams,
 			Engine:  engine,
 			Monitor: mon,
 			Alerts:  notify,

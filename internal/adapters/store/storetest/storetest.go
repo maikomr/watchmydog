@@ -1,5 +1,6 @@
-// Package storetest is the contract every ports.EventStore (Run) and
-// ports.SubscriptionStore (RunSubscriptions) must fulfil. Each
+// Package storetest is the contract every ports.EventStore (Run),
+// ports.SubscriptionStore (RunSubscriptions) and ports.PauseStore
+// (RunPauses) must fulfil. Each
 // adapter's test calls Run, so SQLite, the in-memory fake and any future
 // store (Postgres) are held to the same behaviour.
 package storetest
@@ -218,5 +219,55 @@ func RunSubscriptions(t *testing.T, newStore func(t *testing.T) ports.Subscripti
 		if len(got) != 1 || got[0].Endpoint != sub("b", 0).Endpoint {
 			t.Fatalf("got %+v", got)
 		}
+	})
+}
+
+// RunPauses exercises a fresh, empty pause store.
+func RunPauses(t *testing.T, newStore func(t *testing.T) ports.PauseStore) {
+	ctx := context.Background()
+	check := func(t *testing.T, s ports.PauseStore, want ...domain.CameraID) {
+		t.Helper()
+		got, err := s.PausedCameras(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || len(got) != len(want) {
+			t.Fatalf("got %#v, want %v (non-nil)", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		}
+	}
+	set := func(t *testing.T, s ports.PauseStore, id domain.CameraID, paused bool) {
+		t.Helper()
+		if err := s.SetPaused(ctx, id, paused); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("empty store lists nothing, not nil", func(t *testing.T) {
+		check(t, newStore(t))
+	})
+
+	t.Run("pause, list sorted, resume", func(t *testing.T) {
+		s := newStore(t)
+		set(t, s, "dog", true)
+		set(t, s, "cat", true)
+		check(t, s, "cat", "dog")
+		set(t, s, "cat", false)
+		check(t, s, "dog")
+	})
+
+	t.Run("repeating a call changes nothing", func(t *testing.T) {
+		s := newStore(t)
+		set(t, s, "dog", true)
+		set(t, s, "dog", true)
+		check(t, s, "dog")
+		set(t, s, "dog", false)
+		set(t, s, "dog", false)
+		set(t, s, "never-paused", false)
+		check(t, s)
 	})
 }

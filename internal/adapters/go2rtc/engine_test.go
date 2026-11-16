@@ -149,7 +149,7 @@ func TestEnginePauseResumeRewritesConfigAndRestarts(t *testing.T) {
 
 func TestEngineStartFailsFastOnMissingBinaries(t *testing.T) {
 	e := New(Settings{Bin: "/nonexistent/go2rtc", FFmpegBin: "ffmpeg", CaptureBin: "cap"}, t.TempDir(), quietLogger())
-	err := e.Start(context.Background(), []domain.Camera{dogCamera()})
+	err := e.Start(context.Background(), []domain.Camera{dogCamera()}, nil)
 	if err == nil || !strings.Contains(err.Error(), "go2rtc binary") {
 		t.Errorf("expected go2rtc binary error, got %v", err)
 	}
@@ -163,10 +163,43 @@ func TestEngineStartWaitsForAPI(t *testing.T) {
 	l.Close()
 	e := New(Settings{Bin: fakeBin, APIAddr: addr, FFmpegBin: "/bin/sh", CaptureBin: "/bin/sh"}, t.TempDir(), quietLogger())
 	e.readyTimeout = 300 * time.Millisecond
-	err := e.Start(context.Background(), nil)
+	err := e.Start(context.Background(), nil, nil)
 	t.Cleanup(func() { _ = e.Stop(context.Background()) })
 	if err == nil || !strings.Contains(err.Error(), "not ready") {
 		t.Errorf("expected readiness timeout, got %v", err)
+	}
+}
+
+func TestEngineStartsWithPausedCamerasLeftOut(t *testing.T) {
+	fake := newFakeGo2rtc(t)
+	fakeBin := fakeBinary(t, `trap 'exit 0' TERM; while true; do sleep 0.1; done`)
+	dir := t.TempDir()
+	e := New(Settings{Bin: fakeBin, APIAddr: fake.addr(), FFmpegBin: "/bin/sh", CaptureBin: "/bin/sh"}, dir, quietLogger())
+	ctx := context.Background()
+	cat := dogCamera()
+	cat.ID = "cat"
+	// "gone" was paused once and has since been removed from the config.
+	if err := e.Start(ctx, []domain.Camera{dogCamera(), cat}, []domain.CameraID{"dog", "gone"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Stop(context.Background()) })
+
+	cfg, _ := os.ReadFile(filepath.Join(dir, "go2rtc.yaml"))
+	if strings.Contains(string(cfg), "dog:") || !strings.Contains(string(cfg), "cat:") {
+		t.Errorf("first config must contain cat and not dog:\n%s", cfg)
+	}
+	if st, _ := e.Status(ctx, "dog"); st.State != domain.StreamPaused {
+		t.Errorf("dog: %+v, want paused", st)
+	}
+	if _, err := e.Status(ctx, "gone"); err == nil {
+		t.Error("a paused ID that is not configured must stay unknown")
+	}
+	if err := e.Resume(ctx, "dog"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = os.ReadFile(filepath.Join(dir, "go2rtc.yaml"))
+	if !strings.Contains(string(cfg), "dog:") {
+		t.Errorf("resumed camera must be in config:\n%s", cfg)
 	}
 }
 

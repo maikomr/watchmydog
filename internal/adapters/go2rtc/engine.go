@@ -55,11 +55,18 @@ func New(s Settings, dataDir string, logger *slog.Logger) *Engine {
 	}
 }
 
-// Start renders the config, launches go2rtc and waits for its API.
-func (e *Engine) Start(ctx context.Context, cameras []domain.Camera) error {
+// Start renders the config, launches go2rtc and waits for its API. Cameras
+// listed in paused are left out of the first config, so their devices are
+// not opened even for a moment.
+func (e *Engine) Start(ctx context.Context, cameras []domain.Camera, paused []domain.CameraID) error {
 	e.mu.Lock()
 	for _, c := range cameras {
 		e.cameras[c.ID] = c
+	}
+	for _, id := range paused {
+		if _, ok := e.cameras[id]; ok {
+			e.paused[id] = true
+		}
 	}
 	e.mu.Unlock()
 
