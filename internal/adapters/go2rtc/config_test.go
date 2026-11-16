@@ -44,8 +44,9 @@ func TestRenderConfigIsValidYAMLWithExpectedSources(t *testing.T) {
 	}
 	// The Opus settings must allow in-band error correction: FEC on, an
 	// expected loss above zero, and not the "lowdelay" mode (which cannot
-	// carry it).
-	for _, want := range []string{"-c:a libopus", "-fec 1", "-packet_loss 10", "-application:a audio"} {
+	// carry it). "-min_comp 0" must stay: without it the capture loses
+	// 5-14 % of the audio (see the ADR-0002 amendment).
+	for _, want := range []string{"-c:a libopus", "-fec 1", "-packet_loss 10", "-application:a audio", "-min_comp 0"} {
 		if !strings.Contains(parsed.FFmpeg.Opus, want) {
 			t.Errorf("ffmpeg.opus = %q, missing %q", parsed.FFmpeg.Opus, want)
 		}

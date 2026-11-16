@@ -47,14 +47,31 @@ time over 80 minutes), so the cuts are packets lost on the network.
 go2rtc's built-in Opus settings use `-application lowdelay`. That mode (CELT only) cannot carry
 Opus **in-band FEC** (forward error correction: each packet also holds a small copy of the previous
 one, so the player can rebuild a lost packet from the next). The generated config now overrides the
-`opus` template with `-c:a libopus -application:a audio -fec 1 -packet_loss 10`.
+`opus` template with `-c:a libopus -application:a audio -fec 1 -packet_loss 10 -min_comp 0`.
+
+**`-min_comp 0` must stay.** The first version of this change left it out (it looked like an
+unrelated leftover of go2rtc's default) and broke the audio: the owner saw 5-10 % "audio gaps" with
+no packet loss. Opus needs 48 kHz while the microphone delivers 44.1 kHz, so ffmpeg resamples; the
+option makes the resampler follow the capture timestamps smoothly. Measured on this Mac by
+capturing the same microphone with several settings at once and counting holes in the packet
+timestamps:
+
+| Settings | Audio missing at the source |
+|---|---|
+| go2rtc default (`lowdelay`, `-min_comp 0`) | 0 % |
+| `audio` + FEC, without `-min_comp 0` | 5-14 % (a 12 ms hole several times a second) |
+| `lowdelay` + FEC, without `-min_comp 0` | 12 % |
+| `audio` + FEC + `-min_comp 0` (current) | 0 % |
+
+A browser on the Mac itself (no network) reported 4.7-6.1 % concealed audio before the fix and
+0.00 % after.
 
 Measured with a script that reads the mode and the FEC flag from each packet:
 
 | Settings | Encoder mode | Packets carrying FEC (synthesized speech) |
 |---|---|---|
 | go2rtc default (`lowdelay`) | CELT | 0 % |
-| new | hybrid | 81 % |
+| new | hybrid | 81 % (70 % on the live microphone with speech from the Mac's speaker) |
 
 The bitrate is about the same (around 90 kbit/s for speech), the added delay about 4 ms. The
 encoder adds FEC to voice-like sound (howls, barks, speech), not to steady background noise, where

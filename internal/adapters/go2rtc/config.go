@@ -124,12 +124,19 @@ func lowSource(s Settings, c domain.Camera) string {
 //
 //   - "-application audio" allows the encoder modes that support FEC, without
 //     the speech-only filtering of "voip". It adds about 4 ms of delay.
+//
 //   - "-fec 1 -packet_loss 10" switches FEC on and tells the encoder to
 //     expect about 10 % loss; with 0 it would not spend bits on FEC.
 //
+//   - "-min_comp 0" comes from go2rtc's default and must stay. Opus needs
+//     48 kHz, so ffmpeg resamples the microphone's audio; this option makes
+//     the resampler follow the capture timestamps smoothly. Without it,
+//     measured on this Mac, 5-14 % of the audio went missing at the source
+//     (a 12 ms hole several times a second).
+//
 // The encoder adds the copies to voice-like sound (howling, barking,
 // speech); steady background noise goes without, where a gap is inaudible.
-const opusArgs = "-c:a libopus -application:a audio -fec 1 -packet_loss 10"
+const opusArgs = "-c:a libopus -application:a audio -fec 1 -packet_loss 10 -min_comp 0"
 
 // audioSource builds the ffmpeg:device source for a camera's audio.
 func audioSource(c domain.Camera) string {
