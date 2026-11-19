@@ -8,7 +8,7 @@ COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS  := -X $(MODULE)/internal/buildinfo.Version=$(VERSION) \
             -X $(MODULE)/internal/buildinfo.Commit=$(COMMIT)
 
-.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture launcher install-capture go2rtc-dev secret serve serve-off install-agent uninstall-agent restart-agent agent-status logs doctor
+.PHONY: all build run test lint fmt web web-install web-dev web-test web-check clean check capture launcher install-capture go2rtc-dev secret serve serve-off install-agent uninstall-agent restart-agent agent-status logs doctor docker api-lint
 
 all: check build
 
@@ -126,3 +126,11 @@ clean:
 ## help: list targets
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /'
+
+## docker: build the container image (cloud role, ADR-0011) for this machine's platform
+docker:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t watchmydog:$(VERSION) .
+
+## api-lint: check docs/openapi.yaml against the OpenAPI rules (downloads Redocly's CLI once)
+api-lint:
+	npx --yes @redocly/cli@1.25.0 lint docs/openapi.yaml

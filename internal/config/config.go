@@ -22,6 +22,10 @@ import (
 
 // Config is the fully resolved runtime configuration.
 type Config struct {
+	// Role says what this process is (ADR-0011): "edge" runs at home next
+	// to the cameras (capture, detection, recording, loudspeaker); "cloud"
+	// is the hosted control plane and has no media of its own.
+	Role Role `yaml:"role"`
 	// ListenAddr is the host:port the HTTP API binds to.
 	ListenAddr string `yaml:"listen"`
 	// DataDir holds generated files, the database and the recordings.
@@ -46,6 +50,17 @@ type Config struct {
 	// Cameras is the list of cameras to stream.
 	Cameras []Camera `yaml:"cameras"`
 }
+
+// Role is the deployment role (ADR-0011).
+type Role string
+
+const (
+	RoleEdge  Role = "edge"
+	RoleCloud Role = "cloud"
+)
+
+// Edge reports whether the process owns cameras and media.
+func (c Config) Edge() bool { return c.Role == RoleEdge }
 
 // Talk is the two-way audio section (ADR-0010).
 type Talk struct {
@@ -212,6 +227,7 @@ type Camera struct {
 // Defaults returns the configuration used when nothing is overridden.
 func Defaults() Config {
 	return Config{
+		Role:       RoleEdge,
 		ListenAddr: "127.0.0.1:8080",
 		DataDir:    "data",
 		WebDir:     "web/dist",
@@ -305,6 +321,14 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 		}
 	}
 
+	if cfg.Role == RoleCloud {
+		// Everything that needs the camera, the microphone or the Mac lives
+		// at the edge; a cloud process switches it off whatever the file says.
+		cfg.KeepAwake = false
+		cfg.Sound.Enabled = false
+		cfg.Recording.Enabled = false
+		cfg.Talk.Enabled = false
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -319,6 +343,15 @@ func LoadFromOS() (Config, error) {
 // Validate checks the resolved configuration.
 func (c Config) Validate() error {
 	var errs []error
+	switch c.Role {
+	case RoleEdge:
+	case RoleCloud:
+		if len(c.Cameras) > 0 {
+			errs = append(errs, errors.New("role cloud: cameras belong to the edge; remove the cameras section"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("role must be %q or %q, not %q", RoleEdge, RoleCloud, c.Role))
+	}
 	if c.ListenAddr == "" {
 		errs = append(errs, errors.New("listen address must not be empty"))
 	}

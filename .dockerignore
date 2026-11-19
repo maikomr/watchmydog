@@ -1,0 +1,15 @@
+# Only what the Dockerfile copies is needed; keep secrets and data out.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!web/package.json
+!web/package-lock.json
+!web/index.html
+!web/public/
+!web/src/
+!web/tsconfig.json
+!web/tsconfig.sw.json
+!web/vite.config.ts
+!deploy/watchmydog.cloud.yaml

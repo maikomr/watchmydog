@@ -1,0 +1,694 @@
+openapi: 3.1.0
+info:
+  title: watchmydog API
+  version: "1"
+  summary: Watch, hear and talk to a pet through a home camera.
+  description: |
+    The HTTP API of the watchmydog service. The web client is its only user today.
+
+    - **Login:** every route except health, session, login and logout needs the
+      session cookie `wmd_session`, set by `POST /api/login` (ADR-0005). It is
+      HttpOnly, Secure and SameSite=Lax.
+    - **Errors** are JSON `{"error": "..."}`.
+    - **Times** are RFC 3339 in UTC.
+    - **Roles** (ADR-0011): the edge serves everything; a cloud process leaves out
+      the routes marked `x-edge-only`.
+
+    `internal/httpapi/openapi_test.go` fails when this file and the routes of the
+    server differ.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /
+    description: The service itself; reached over `tailscale serve` at home.
+security:
+  - session: []
+tags:
+  - name: session
+  - name: cameras
+  - name: events
+  - name: clips
+  - name: talk
+  - name: push
+  - name: media
+
+paths:
+  /api/health:
+    get:
+      tags: [session]
+      operationId: getHealth
+      summary: Is the service running?
+      security: []
+      responses:
+        "200":
+          description: Always 200 while the process answers; `status` says whether all parts work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/session:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: Is this browser logged in?
+      security: []
+      responses:
+        "200":
+          description: Logged in (or login is switched off).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/login:
+    post:
+      tags: [session]
+      operationId: login
+      summary: Log in with the shared secret; sets the session cookie.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret]
+              properties:
+                secret: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Logged in. The response sets `wmd_session`.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429":
+          description: Too many wrong secrets from this client; wait.
+          headers:
+            Retry-After:
+              description: Seconds to wait.
+              schema: { type: integer }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, retryAfterSeconds]
+                properties:
+                  error: { type: string }
+                  retryAfterSeconds: { type: integer }
+
+  /api/logout:
+    post:
+      tags: [session]
+      operationId: logout
+      summary: Forget the session cookie in this browser.
+      security: []
+      responses:
+        "204": { description: Logged out. }
+
+  /api/cameras:
+    get:
+      tags: [cameras]
+      operationId: listCameras
+      summary: All cameras with their stream state.
+      responses:
+        "200":
+          description: The cameras.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cameras]
+                properties:
+                  cameras:
+                    type: array
+                    items: { $ref: "#/components/schemas/Camera" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/cameras/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    get:
+      tags: [cameras]
+      operationId: getCamera
+      summary: One camera with its stream state.
+      responses:
+        "200":
+          description: The camera.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Camera" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/cameras/{id}/pause:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    post:
+      tags: [cameras]
+      operationId: pauseCamera
+      summary: Release the camera for other programs; it stays released across restarts.
+      x-edge-only: true
+      responses:
+        "200":
+          description: Released.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Camera" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/cameras/{id}/resume:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    post:
+      tags: [cameras]
+      operationId: resumeCamera
+      summary: Take the camera back after a release.
+      x-edge-only: true
+      responses:
+        "200":
+          description: Streaming again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Camera" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/cameras/{id}/talk:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    post:
+      tags: [talk]
+      operationId: startTalk
+      summary: Open the loudspeaker at the camera (ADR-0010).
+      description: Ends a session the camera may already have. Send the recording with `putTalkChunk`.
+      x-edge-only: true
+      responses:
+        "201":
+          description: The session the chunks belong to.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session: { type: string, pattern: "^[0-9a-f]{32}$" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/talk/{session}/chunks/{seq}:
+    parameters:
+      - $ref: "#/components/parameters/TalkSession"
+      - name: seq
+        in: path
+        required: true
+        description: Running number of the chunk, from 0.
+        schema: { type: integer, minimum: 0, maximum: 1048576 }
+    put:
+      tags: [talk]
+      operationId: putTalkChunk
+      summary: Add the next piece of the recording.
+      description: |
+        The body is the piece as `MediaRecorder` hands it out; together the pieces form
+        one WebM/Opus stream. Pieces may arrive out of order (up to 16 ahead); a piece
+        sent twice is ignored. A session ends after 3 s without a piece or after 2 minutes.
+      x-edge-only: true
+      requestBody:
+        required: true
+        content:
+          audio/webm:
+            schema: { type: string, contentMediaType: audio/webm, maxLength: 262144 }
+      responses:
+        "204": { description: Accepted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Too many pieces before this one are missing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: The session has ended; start a new one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: The piece is larger than 256 KiB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+
+  /api/talk/{session}:
+    parameters:
+      - $ref: "#/components/parameters/TalkSession"
+    delete:
+      tags: [talk]
+      operationId: stopTalk
+      summary: End the session after what was sent has played.
+      description: Ending a session that has already ended is not an error.
+      x-edge-only: true
+      responses:
+        "204": { description: Ended. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      summary: Noise events, newest first (ADR-0007).
+      parameters:
+        - name: camera
+          in: query
+          schema: { $ref: "#/components/schemas/CameraId" }
+        - name: since
+          in: query
+          description: Only events that started at or after this time.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Only events that started before this time.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: The events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/events/stream:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Live sound level and events as server-sent events.
+      description: |
+        A long-lived response read with the browser's `EventSource`. Messages:
+
+        - `hello`, once, first: `{enabled, thresholdDbfs, releaseDbfs, ongoing: Event[]}`
+        - `level`, about 10 per second: `{cameraId, t, dbfs, loud}` (`t` in Unix milliseconds)
+        - `sound`, when an event starts and when it ends: an `Event`
+
+        A comment line is sent every 15 s when nothing else is.
+      parameters:
+        - name: camera
+          in: query
+          schema: { $ref: "#/components/schemas/CameraId" }
+      responses:
+        "200":
+          description: The stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/clips:
+    get:
+      tags: [clips]
+      operationId: listClips
+      summary: Recorded clips, newest first, and the disk space they use (ADR-0009).
+      x-edge-only: true
+      parameters:
+        - name: camera
+          in: query
+          schema: { $ref: "#/components/schemas/CameraId" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 30 }
+      responses:
+        "200":
+          description: The clips.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClipList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/clips/{id}/video.mp4:
+    parameters:
+      - $ref: "#/components/parameters/ClipId"
+    get:
+      tags: [clips]
+      operationId: getClipVideo
+      summary: The clip as MP4 (H.264 and Opus). Supports range requests.
+      x-edge-only: true
+      parameters:
+        - name: download
+          in: query
+          description: Any value makes the browser save the file instead of playing it.
+          schema: { type: string }
+        - name: Range
+          in: header
+          schema: { type: string, example: "bytes=0-1023" }
+      responses:
+        "200":
+          description: The whole file.
+          content:
+            video/mp4:
+              schema: { type: string, contentMediaType: video/mp4 }
+        "206":
+          description: The requested part.
+          content:
+            video/mp4:
+              schema: { type: string, contentMediaType: video/mp4 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/clips/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ClipId"
+    delete:
+      tags: [clips]
+      operationId: deleteClip
+      summary: Delete a clip and its video.
+      x-edge-only: true
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/push/config:
+    get:
+      tags: [push]
+      operationId: getPushConfig
+      summary: What a browser needs to switch notifications on (ADR-0008).
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PushConfig" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/push/subscribe:
+    post:
+      tags: [push]
+      operationId: subscribePush
+      summary: Register this device for notifications. Repeating it is fine.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushSubscription" }
+      responses:
+        "204": { description: Registered. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/push/unsubscribe:
+    post:
+      tags: [push]
+      operationId: unsubscribePush
+      summary: Stop notifications to a device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string, format: uri }
+      responses:
+        "204": { description: Done, also when the device was not registered. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/push/test:
+    post:
+      tags: [push]
+      operationId: testPush
+      summary: Send a test notification to one registered device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string, format: uri }
+      responses:
+        "204": { description: Sent. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The push service no longer knows the device; switch notifications on again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /media/api/webrtc:
+    post:
+      tags: [media]
+      operationId: playWebRTC
+      summary: Live video and sound over WebRTC (WHEP).
+      description: |
+        Send an SDP offer, receive the SDP answer. Proxied to the media engine (go2rtc,
+        ADR-0002), which also serves its other player endpoints under `/media/`.
+      x-edge-only: true
+      parameters:
+        - name: src
+          in: query
+          required: true
+          description: A stream name from `Camera.streams`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema: { type: string }
+      responses:
+        "201":
+          description: The SDP answer.
+          content:
+            application/sdp:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: The engine could not answer, for example while the camera is released.
+          content:
+            text/plain:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: wmd_session
+
+  parameters:
+    CameraId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/CameraId" }
+    ClipId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+    TalkSession:
+      name: session
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: The request is malformed; `error` says how.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: No valid session cookie, or a wrong secret at login.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: The camera or clip does not exist.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadGateway:
+      description: A part of the service behind the API (media engine, player, push service) failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: The feature is switched off in the server's configuration.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    CameraId:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9_-]{0,31}$"
+
+    Health:
+      type: object
+      required: [status, version, commit, time, engine]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        commit: { type: string }
+        time: { type: string, format: date-time }
+        engine:
+          type: string
+          description: '"ok", "not configured" (cloud role) or what is wrong.'
+
+    Session:
+      type: object
+      required: [authenticated, authRequired]
+      properties:
+        authenticated: { type: boolean }
+        authRequired:
+          type: boolean
+          description: False when the server runs with login switched off.
+        subject: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    Camera:
+      type: object
+      required: [id, name, width, height, fps, hasAudio, canTalk, state, consumers, stream, streams]
+      properties:
+        id: { $ref: "#/components/schemas/CameraId" }
+        name: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        fps: { type: integer }
+        hasAudio: { type: boolean }
+        canTalk:
+          type: boolean
+          description: True when talking through the loudspeaker works at this camera.
+        state: { type: string, enum: [idle, active, paused, error] }
+        consumers:
+          type: integer
+          description: How many players and readers are attached.
+        detail: { type: string }
+        stream:
+          type: string
+          description: The best stream, to request at `/media/api/webrtc?src=`.
+        streams:
+          type: array
+          description: Every quality variant, best first.
+          items:
+            type: object
+            required: [quality, name, width, height]
+            properties:
+              quality: { type: string, enum: [high, low] }
+              name: { type: string }
+              width: { type: integer }
+              height: { type: integer }
+
+    Event:
+      type: object
+      required: [id, cameraId, kind, startedAt, endedAt, peakDbfs]
+      properties:
+        id: { type: string }
+        cameraId: { $ref: "#/components/schemas/CameraId" }
+        kind: { type: string, enum: [sound] }
+        startedAt: { type: string, format: date-time }
+        endedAt:
+          type: [string, "null"]
+          format: date-time
+          description: null while the noise goes on.
+        peakDbfs:
+          type: number
+          description: Loudest 100 ms of the event; 0 is the most the microphone reports.
+
+    Clip:
+      type: object
+      required: [id, cameraId, startedAt, durationSeconds, sizeBytes, videoUrl]
+      properties:
+        id: { type: string, pattern: "^[0-9a-f]{32}$" }
+        cameraId: { $ref: "#/components/schemas/CameraId" }
+        startedAt: { type: string, format: date-time }
+        durationSeconds: { type: number }
+        sizeBytes: { type: integer, format: int64 }
+        videoUrl: { type: string }
+
+    ClipList:
+      type: object
+      required: [enabled, clips, usedBytes, maxBytes, keepSeconds]
+      properties:
+        enabled:
+          type: boolean
+          description: False when recording is switched off; older clips can still be listed.
+        clips:
+          type: array
+          items: { $ref: "#/components/schemas/Clip" }
+        usedBytes: { type: integer, format: int64 }
+        maxBytes: { type: integer, format: int64 }
+        keepSeconds:
+          type: integer
+          description: How long clips are kept; 0 means until the disk limit removes them.
+
+    PushConfig:
+      type: object
+      required: [enabled, publicKey, cooldownSeconds, quietHours]
+      properties:
+        enabled: { type: boolean }
+        publicKey:
+          type: string
+          description: VAPID public key (base64url) the browser subscribes with.
+        cooldownSeconds: { type: integer }
+        quietHours:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [start, end]
+              properties:
+                start: { type: string, example: "23:00" }
+                end: { type: string, example: "07:00" }
+
+    PushSubscription:
+      type: object
+      description: What `PushSubscription.toJSON()` returns in the browser.
+      required: [endpoint, keys]
+      properties:
+        endpoint: { type: string, format: uri }
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh: { type: string }
+            auth: { type: string }

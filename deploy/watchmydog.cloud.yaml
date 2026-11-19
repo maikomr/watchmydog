@@ -1,0 +1,19 @@
+# watchmydog in the cloud role (ADR-0011), as used by the Docker image.
+# No cameras: capture, detection, recording and the loudspeaker stay at the
+# edge. Today this serves login, the API and the web client against its own
+# database; receiving events from edges is not built yet.
+role: cloud
+
+# All interfaces inside the container. Put TLS in front (load balancer or
+# reverse proxy): the session cookie is only sent over HTTPS.
+listen: 0.0.0.0:8080
+data_dir: /data
+web_dir: /app/web
+
+auth:
+  # The secret comes from WATCHMYDOG_SECRET in the environment.
+  session_ttl: 720h
+
+push:
+  enabled: true
+  cooldown: 5m

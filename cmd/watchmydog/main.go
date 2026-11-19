@@ -101,28 +101,36 @@ func run() error {
 		}
 	}()
 
-	// Media engine: supervised go2rtc process.
-	engine := cameras.Remember(go2rtc.New(go2rtc.Settings{
-		Bin:        cfg.Engine.Bin,
-		APIAddr:    cfg.Engine.APIAddr,
-		RTSPAddr:   cfg.Engine.RTSPAddr,
-		WebRTCPort: cfg.Engine.WebRTCPort,
-		FFmpegBin:  cfg.Engine.FFmpegBin,
-		CaptureBin: cfg.Engine.CaptureBin,
-		LogLevel:   cfg.Engine.LogLevel,
-	}, cfg.DataDir, logger.With("component", "engine")), store, logger.With("component", "cameras"))
 	cams := cfg.DomainCameras()
-	if err := engine.Start(ctx, cams, nil); err != nil {
-		return fmt.Errorf("start media engine: %w", err)
-	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := engine.Stop(shutdownCtx); err != nil {
-			logger.Error("stop media engine", "err", err)
+	edge := cfg.Edge()
+	logger.Info("role", "role", cfg.Role)
+
+	// Media engine: supervised go2rtc process. Only the edge has one; a
+	// cloud process serves the API without media (ADR-0011).
+	var engine ports.StreamEngine
+	if edge {
+		eng := cameras.Remember(go2rtc.New(go2rtc.Settings{
+			Bin:        cfg.Engine.Bin,
+			APIAddr:    cfg.Engine.APIAddr,
+			RTSPAddr:   cfg.Engine.RTSPAddr,
+			WebRTCPort: cfg.Engine.WebRTCPort,
+			FFmpegBin:  cfg.Engine.FFmpegBin,
+			CaptureBin: cfg.Engine.CaptureBin,
+			LogLevel:   cfg.Engine.LogLevel,
+		}, cfg.DataDir, logger.With("component", "engine")), store, logger.With("component", "cameras"))
+		if err := eng.Start(ctx, cams, nil); err != nil {
+			return fmt.Errorf("start media engine: %w", err)
 		}
-	}()
-	logger.Info("media engine ready", "cameras", len(cams))
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := eng.Stop(shutdownCtx); err != nil {
+				logger.Error("stop media engine", "err", err)
+			}
+		}()
+		logger.Info("media engine ready", "cameras", len(cams))
+		engine = eng
+	}
 
 	// Event history and sound monitoring (ADR-0007).
 	if n, err := store.CloseOpenEvents(ctx); err != nil {
@@ -150,28 +158,38 @@ func run() error {
 	mon.OnEventStart(notify.EventStarted)
 	go notify.Run(ctx)
 
-	// Talking through the loudspeaker (ADR-0010). The microphone hears the
-	// owner's voice as noise, so notifications are held back meanwhile.
-	talkSvc := newTalk(cfg, logger)
-	talkSvc.OnActive(notify.HoldOff)
+	// Talking through the loudspeaker (ADR-0010) and recording (ADR-0009)
+	// are edge features; the cloud leaves their routes out.
+	var (
+		talkSvc *talk.Service
+		clipSvc *clips.Service
+	)
 	talkDone := make(chan struct{})
-	go func() {
-		defer close(talkDone)
-		talkSvc.Run(ctx)
-	}()
-
-	// Recording and clips (ADR-0009), hooked into the monitor as well.
-	clipSvc, err := newClips(cfg, store, logger)
-	if err != nil {
-		return err
-	}
-	mon.OnEventStart(clipSvc.EventStarted)
-	mon.OnEventEnd(clipSvc.EventEnded)
 	clipsDone := make(chan struct{})
-	go func() {
-		defer close(clipsDone)
-		clipSvc.Run(ctx, cams)
-	}()
+	if edge {
+		// The microphone hears the owner's voice as noise, so notifications
+		// are held back meanwhile.
+		talkSvc = newTalk(cfg, logger)
+		talkSvc.OnActive(notify.HoldOff)
+		go func() {
+			defer close(talkDone)
+			talkSvc.Run(ctx)
+		}()
+
+		clipSvc, err = newClips(cfg, store, logger)
+		if err != nil {
+			return err
+		}
+		mon.OnEventStart(clipSvc.EventStarted)
+		mon.OnEventEnd(clipSvc.EventEnded)
+		go func() {
+			defer close(clipsDone)
+			clipSvc.Run(ctx, cams)
+		}()
+	} else {
+		close(talkDone)
+		close(clipsDone)
+	}
 
 	monitorDone := make(chan struct{})
 	go func() {

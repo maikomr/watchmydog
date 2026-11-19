@@ -19,7 +19,11 @@ make run          # API on :8080
 make web-dev      # client on :5173 with /api proxied
 ```
 
-`make check` runs Go fmt/vet/tests and the web type-check and vitest suite.
+`make check` runs Go fmt/vet/tests and the web type-check and vitest suite. It also checks that
+`docs/openapi.yaml` lists exactly the server's routes: add a route there when you add one to
+`internal/httpapi/server.go`. `make api-lint` checks the spec against the OpenAPI rules, `make docker`
+builds the container image (ADR-0011). What replaces each adapter in a hosted product:
+[PORTS.md](PORTS.md).
 
 Commit per increment (or per meaningful step inside one) with a message of the form
 `inc<N>: <what changed>`. Push to the private GitHub repo `maikomr/watchmydog`.
@@ -66,3 +70,5 @@ spot later.
 | 9 | 2026-11-16 | automated part pass | `make check` green (84 web tests; the recorder test joins real video files with ffmpeg). A second copy of the service on other ports, recording from the live stream: ring files of 10 s; a spoken test noise gave a clip that begins before the noise (H.264 + Opus MP4, index at the front, decodes without errors, no irregular frame gaps); a long noise was split at `max_clip`; range request answers 206; the clip plays in a browser at phone width (1280x720) and silences the live view; delete answers 204, then 404, and removes the file; with `max_disk_mb: 200` the eleventh clip made the oldest be deleted (log: `over recording.max_disk_mb`) and use stayed at 200 MB. Measured: capture 11 %, encoding 8 %, recorder 1.5 % of one core. Not checked yet: on the phone, on the installed service, and over 24 h |
 | 9 | 2026-11-16 | pass (24 h check open) | Installed by the owner (`ad311ad`). Log: `recording on`, a clip saved for a noise and deleted by the owner from the app. The disk-use check after 24 h is still open |
 | 10 | 2026-11-16 | automated part pass | `make check` green (94 web tests). A second copy of the service whose ffplay is a script that writes to a file (no sound): a WebM/Opus stream sent in pieces, two of them swapped, arrived byte for byte; in Chrome, the app's button driven with a generated tone instead of the microphone gave `talk started` / `talk ended reason=stopped duration=3s`, the live view was muted meanwhile, and the received stream decoded as Opus audio. Not checked: sound from the real loudspeaker, the delay, the phone. Audible tests were not run because the camera was released at the time |
+| 10 | 2026-11-19 | pass | Owner validated talking on the phone |
+| 12 | 2026-11-19 | pass (lint pending) | `make check` green, including the tests that `docs/openapi.yaml` and the routes match and every `$ref` resolves. `docker build` passes (25 MB); `docker buildx build --platform linux/amd64,linux/arm64` passes. The container starts in the cloud role, creates its VAPID keys in `/data` as the unprivileged user, answers health 200, needs login (401 without), logs in with `WATCHMYDOG_SECRET`, lists no cameras, serves events and push settings, and has no talk, clip or media routes (404); it has no shell. `make api-lint` (Redocly) was not run here: downloading it was blocked in this session |

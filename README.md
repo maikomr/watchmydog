@@ -25,7 +25,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 9 | Recording and clips: ring of the last minutes, a clip per noise with 15 s before and after (ADR-0009) | done |
 | 10 | Two-way audio: hold a button to talk through the Mac's loudspeaker (ADR-0010) | built, phone check pending |
 | 11 | Camera PTZ controls | |
-| 12 | SaaS readiness | |
+| 12 | SaaS readiness: edge/cloud roles, Docker image, OpenAPI spec, ports guide (ADR-0011) | done |
 
 ## Quick start
 
@@ -71,6 +71,10 @@ Clips live in `data/recordings/clips`, are limited by `recording.max_disk_mb` an
 Talking (ADR-0010): "Hold to talk" in the app records the phone's microphone and the Mac plays it
 on its loudspeaker with `ffplay`. No notifications are sent while talking. API:
 `POST /api/cameras/{id}/talk`, `PUT /api/talk/{session}/chunks/{n}`, `DELETE /api/talk/{session}`.
+
+Cloud readiness (ADR-0011): `role: cloud` runs the service without media; `make docker` builds a
+25 MB image of it for linux/amd64 and arm64. The API is described in `docs/openapi.yaml`, and
+`docs/PORTS.md` lists what would replace each adapter in a hosted product.
 
 Web client (`web/`): a WHEP WebRTC player with tap-to-unmute, reconnect with backoff, a stall
 watchdog (reconnects when frames stop, e.g. after a go2rtc restart), fullscreen and a high/low

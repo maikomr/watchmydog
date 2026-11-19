@@ -185,6 +185,11 @@ Each increment ends with a check you perform yourself. Nothing later starts unti
 - **Verify:** with the Insta360 Link 2 connected, buttons move the camera; with REDRAGON the controls are hidden.
 
 ### 12. SaaS readiness (no cloud built yet)
+
+> Outcome note (2026-11-19): built as planned. The ADR is ADR-0011 (ADR-005 was taken). The config
+> split is a `role: edge | cloud` field in one binary rather than two config files; the Docker image
+> runs the cloud role. The ports guide is `docs/PORTS.md`. The spec is checked against the server's
+> routes by Go tests; `make api-lint` adds Redocly's rule check.
 - `Dockerfile` for the Go service (linux/arm64+amd64), OpenAPI spec for `/api`, `edge` vs `cloud` config split, `ports` doc listing each adapter's cloud replacement (FCM, S3, Postgres, OIDC, TURN/SFU), ADR-005 (edge/cloud topology).
 - **Verify:** `docker build` passes; `go test ./...` runs adapter contract tests against in-memory fakes; the API spec validates.
 

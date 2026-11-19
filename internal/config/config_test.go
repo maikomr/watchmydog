@@ -449,3 +449,32 @@ func TestTalkDefaultsOverridesAndValidation(t *testing.T) {
 		t.Errorf("disabled talk: %v", err)
 	}
 }
+
+func TestRole(t *testing.T) {
+	load := func(yaml string) (Config, error) {
+		return Load([]string{"-config", "/c.yaml"}, env(nil), files(map[string]string{"/c.yaml": "auth: {disabled: true}\n" + yaml}))
+	}
+	cfg, err := load("")
+	if err != nil || cfg.Role != RoleEdge || !cfg.Edge() {
+		t.Fatalf("default role = %q, err %v; want edge", cfg.Role, err)
+	}
+
+	cfg, err = load("role: cloud\nkeep_awake: true\nsound: {enabled: true}\nrecording: {enabled: true}\ntalk: {enabled: true}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Edge() || cfg.KeepAwake || cfg.Sound.Enabled || cfg.Recording.Enabled || cfg.Talk.Enabled {
+		t.Errorf("cloud must switch off edge features: %+v", cfg)
+	}
+	if !cfg.Push.Enabled {
+		t.Error("cloud keeps notifications")
+	}
+
+	_, err = load("role: cloud\ncameras:\n  - {id: dog, video: {device: x, width: 640, height: 480, fps: 30, bitrate_kbps: 500}}\n")
+	if err == nil || !strings.Contains(err.Error(), "cameras belong to the edge") {
+		t.Errorf("cloud with cameras: %v", err)
+	}
+	if _, err := load("role: fog\n"); err == nil || !strings.Contains(err.Error(), "role must be") {
+		t.Errorf("unknown role: %v", err)
+	}
+}
