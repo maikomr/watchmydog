@@ -23,9 +23,9 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 7 | Noise detection: live level meter, event history (ADR-0007) | done |
 | 8 | Push notifications: Web Push, per-device switch, cooldown, quiet hours (ADR-0008) | done |
 | 9 | Recording and clips: ring of the last minutes, a clip per noise with 15 s before and after (ADR-0009) | done |
-| 10 | Two-way audio: hold a button to talk through the Mac's loudspeaker (ADR-0010) | built, phone check pending |
+| 10 | Two-way audio: hold a button to talk through the Mac's loudspeaker (ADR-0010) | done |
 | 11 | Camera PTZ controls | |
-| 12 | SaaS readiness: edge/cloud roles, Docker image, OpenAPI spec, ports guide (ADR-0011) | done |
+| 12 | SaaS readiness: edge/cloud roles, Docker image, OpenAPI spec, ports guide (ADR-0011) | done, `make api-lint` pending |
 
 ## Quick start
 
