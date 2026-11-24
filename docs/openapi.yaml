@@ -26,12 +26,19 @@ security:
   - session: []
 tags:
   - name: session
+    description: Health, login and logout.
   - name: cameras
+    description: The cameras and whether the service holds or has released them.
   - name: events
+    description: Detected sounds and other things that happened.
   - name: clips
+    description: Recorded clips around events. Edge only.
   - name: talk
+    description: Speak to the pet through the home speaker. Edge only.
   - name: push
+    description: Web push notifications to the owner's devices.
   - name: media
+    description: Live video and audio (WebRTC through go2rtc). Edge only.
 
 paths:
   /api/health:
@@ -437,7 +444,7 @@ paths:
               properties:
                 endpoint: { type: string, format: uri }
       responses:
-        "204": { description: Done, also when the device was not registered. }
+        "204": { description: "Done, also when the device was not registered." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 

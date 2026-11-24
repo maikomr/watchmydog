@@ -1,0 +1,9 @@
+# This file instructs Redocly's linter to ignore the rules contained for specific parts of your API.
+# See https://redoc.ly/docs/cli/ for more information.
+#
+# Health and logout never answer with a 4xx (health is always 200, logout is always 204),
+# so the operation-4xx-response rule does not apply to them.
+docs/openapi.yaml:
+  operation-4xx-response:
+    - '#/paths/~1api~1health/get/responses'
+    - '#/paths/~1api~1logout/post/responses'
