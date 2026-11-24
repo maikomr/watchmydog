@@ -25,7 +25,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | 9 | Recording and clips: ring of the last minutes, a clip per noise with 15 s before and after (ADR-0009) | done |
 | 10 | Two-way audio: hold a button to talk through the Mac's loudspeaker (ADR-0010) | done |
 | 11 | Camera PTZ controls | |
-| 12 | SaaS readiness: edge/cloud roles, Docker image, OpenAPI spec, ports guide (ADR-0011) | done, `make api-lint` pending |
+| 12 | SaaS readiness: edge/cloud roles, Docker image, OpenAPI spec, ports guide (ADR-0011) | done |
 
 ## Quick start
 

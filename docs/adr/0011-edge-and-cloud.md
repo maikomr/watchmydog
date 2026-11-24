@@ -58,6 +58,10 @@ WebSocket or gRPC stream for events and commands, and uploads of clips to signed
 URLs. Tailscale stays the way the owner reaches the edge directly. To decide when the cloud is
 built.
 
+Web client, to do with the edge link: with no cameras the app only shows a red "no cameras"
+pill above an empty black stage and the camera controls. It should hide those and say that
+cameras connect from a home Mac (edge). Found in the owner's check of 2026-11-24.
+
 ### Docker image
 
 - `Dockerfile` at the repo root, three stages: the web client (Node), the service (Go,
