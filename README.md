@@ -14,6 +14,7 @@ and notifies the phone. Later increments add recording, two-way talk and camera 
 | # | Increment | State |
 |---|-----------|-------|
 | 0 | Scaffold: Go service with `/api/health`, web client skeleton, Makefile, docs | done |
+| 13–17 | Edge link: pairing, outbox, commands, live view through TURN, clip upload (ADR-0012) | designed |
 | 1 | Camera + audio proof with go2rtc (native capture helper, ADR-0004) | done |
 | 2 | Tailscale remote access | done |
 | 3 | Control service supervises go2rtc, pause/resume | done |

@@ -55,8 +55,8 @@ Per port details: [docs/PORTS.md](../PORTS.md).
 
 The edge would open an outgoing connection to the cloud (no port forwarding at home): a
 WebSocket or gRPC stream for events and commands, and uploads of clips to signed object-storage
-URLs. Tailscale stays the way the owner reaches the edge directly. To decide when the cloud is
-built.
+URLs. Tailscale stays the way the owner reaches the edge directly. Designed in
+[ADR-0012](0012-edge-link.md).
 
 Web client, to do with the edge link: with no cameras the app only shows a red "no cameras"
 pill above an empty black stage and the camera controls. It should hide those and say that

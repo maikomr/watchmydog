@@ -21,7 +21,8 @@ proves a replacement behaves the same.
 Not ports today, but would need one in the cloud:
 
 - **Edge link:** how an edge registers with the cloud, uploads events and clips, and receives
-  commands (release, talk). Not designed yet; ADR-0011 lists the options.
+  commands (release, talk). Designed in ADR-0012 (ports `EdgeLink`,
+  `SiteRegistry`, `EdgeGateway`); not built yet.
 - **Tenancy:** a `site` (one home, one or more cameras) owned by an account.
 
 ## Running the contract tests
